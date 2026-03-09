@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "255425572188",
+    "project_id": "nexusbot-5edeb",
+    "storage_bucket": "nexusbot-5edeb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:255425572188:android:66e24800f5ebfd1ae76599",
+        "android_client_info": {
+          "package_name": "com.example.nexusbot"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNHeBlAbz5jM06IWK7Tg0zR60d8L-i018"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

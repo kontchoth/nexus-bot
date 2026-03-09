@@ -1,0 +1,388 @@
+import 'dart:async';
+import 'package:bloc/bloc.dart';
+import 'package:equatable/equatable.dart';
+import 'package:uuid/uuid.dart';
+import '../models/models.dart';
+import '../services/live_market_service.dart';
+import '../services/market_simulator.dart';
+
+part 'trading_event.dart';
+part 'trading_state.dart';
+
+const _uuid = Uuid();
+
+class TradingBloc extends Bloc<TradingEvent, TradingState> {
+  Timer? _marketTimer;
+  int _tickCount = 0;
+  final LiveMarketService _liveMarketService = LiveMarketService();
+  final _alertController = StreamController<TradeAlert>.broadcast();
+  bool _useLiveData = true;
+  bool _tickInFlight = false;
+  bool _liveErrorLogged = false;
+
+  Stream<TradeAlert> get alertsStream => _alertController.stream;
+
+  TradingBloc() : super(TradingState.initial()) {
+    on<InitializeMarket>(_onInitialize);
+    on<MarketTick>(_onMarketTick);
+    on<ToggleBot>(_onToggleBot);
+    on<BuyCoin>(_onBuyCoin);
+    on<SellPosition>(_onSellPosition);
+    on<SelectCoin>(_onSelectCoin);
+    on<ChangeExchange>(_onChangeExchange);
+    on<ChangeTimeframe>(_onChangeTimeframe);
+    on<ChangeTab>(_onChangeTab);
+    on<UpdateCapital>(_onUpdateCapital);
+    on<UpdateAlertPreferences>(_onUpdateAlertPreferences);
+    on<ResetDay>(_onResetDay);
+    on<_AddLog>((event, emit) {
+      final newLogs = [event.log, ...state.logs].take(80).toList();
+      emit(state.copyWith(logs: newLogs));
+    });
+  }
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
+
+  Future<void> _onInitialize(
+      InitializeMarket event, Emitter<TradingState> emit) async {
+    List<CoinData> coins;
+    try {
+      coins =
+          await _liveMarketService.fetchInitialCoins(state.selectedTimeframe);
+      _useLiveData = true;
+      _addLog('🟢 Live market mode enabled (Binance.US public feed)',
+          TradeLogType.system);
+    } catch (_) {
+      coins = MarketSimulator.generateInitialCoins();
+      _useLiveData = false;
+      _addLog(
+          '🟡 Live feed unavailable — using simulator data', TradeLogType.warn);
+    }
+
+    emit(state.copyWith(
+      coins: coins,
+      marketDataMode:
+          _useLiveData ? MarketDataMode.live : MarketDataMode.simulator,
+    ));
+
+    _addLog('⚡ NexusBot initialized — Triple Confluence strategy loaded',
+        TradeLogType.system);
+    _addLog(
+        _useLiveData
+            ? '📡 Connected to Binance.US live market feed'
+            : '📡 Running in simulation mode',
+        TradeLogType.system);
+    _addLog(
+        '🎯 Daily target: \$500 | Capital: \$${state.stats.capital.toStringAsFixed(0)}',
+        TradeLogType.system);
+
+    _startMarketTimer();
+  }
+
+  Future<void> _onMarketTick(
+      MarketTick event, Emitter<TradingState> emit) async {
+    if (_tickInFlight) return;
+    _tickInFlight = true;
+    try {
+      _tickCount++;
+
+      List<CoinData> updatedCoins;
+      var tickMode = state.marketDataMode;
+      try {
+        if (_useLiveData) {
+          updatedCoins = await _liveMarketService.tickCoins(
+            state.coins,
+          );
+          _liveErrorLogged = false;
+          tickMode = MarketDataMode.live;
+        } else {
+          updatedCoins = state.coins.map((coin) {
+            final def = MarketSimulator.getDefFor(coin.symbol);
+            return MarketSimulator.tick(coin, def);
+          }).toList();
+          tickMode = MarketDataMode.simulator;
+        }
+      } catch (_) {
+        updatedCoins = state.coins.map((coin) {
+          final def = MarketSimulator.getDefFor(coin.symbol);
+          return MarketSimulator.tick(coin, def);
+        }).toList();
+        tickMode = MarketDataMode.simulator;
+        if (!_liveErrorLogged) {
+          _addLog('⚠️ Live feed error — temporary simulator fallback',
+              TradeLogType.warn);
+          _liveErrorLogged = true;
+        }
+      }
+
+      // Update open positions with new prices
+      final updatedPositions = state.positions.map((pos) {
+        final coin = updatedCoins.firstWhere(
+          (c) => c.symbol == pos.symbol,
+          orElse: () => updatedCoins.first,
+        );
+        return pos.copyWith(currentPrice: coin.price);
+      }).toList();
+
+      // Auto-trade logic (every 8 ticks when bot active)
+      var newPositions = List<Position>.from(updatedPositions);
+      var newStats = state.stats.copyWith(
+        unrealizedPnL:
+            updatedPositions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL),
+      );
+
+      if (state.botStatus == BotStatus.active && _tickCount % 8 == 0) {
+        for (final coin in updatedCoins) {
+          final sig = coin.indicators.signal;
+
+          // Auto BUY
+          if (sig == SignalType.buy &&
+              coin.indicators.signalStrength >= 3 &&
+              !newPositions.any((p) => p.symbol == coin.symbol) &&
+              newPositions.length < 8) {
+            final size = state.stats.capital * 0.05;
+            final pos = Position(
+              id: _uuid.v4(),
+              symbol: coin.symbol,
+              entryPrice: coin.price,
+              currentPrice: coin.price,
+              size: size,
+              quantity: size / coin.price,
+              openedAt: DateTime.now(),
+              exchange: state.selectedExchange,
+            );
+            newPositions.add(pos);
+            _addLog(
+              '🟢 AUTO BUY ${coin.symbol} @ ${coin.formattedPrice} — Size: \$${size.toStringAsFixed(0)}',
+              TradeLogType.buy,
+            );
+            _emitTradeAlert(
+              title: 'Auto Buy',
+              message: '${coin.symbol} at ${coin.formattedPrice}',
+              type: TradeLogType.buy,
+            );
+            newStats = newStats.copyWith(totalTrades: newStats.totalTrades + 1);
+          }
+
+          // Auto SELL
+          if (sig == SignalType.sell) {
+            final posIdx =
+                newPositions.indexWhere((p) => p.symbol == coin.symbol);
+            if (posIdx != -1) {
+              final pos = newPositions[posIdx];
+              final pnl = pos.unrealizedPnL;
+              final sign = pnl >= 0 ? '+' : '';
+              _addLog(
+                '🔴 AUTO SELL ${coin.symbol} @ ${coin.formattedPrice} — PnL: $sign\$${pnl.toStringAsFixed(2)}',
+                pnl >= 0 ? TradeLogType.win : TradeLogType.loss,
+              );
+              _emitTradeAlert(
+                title: 'Auto Sell',
+                message:
+                    '${coin.symbol} · PnL $sign\$${pnl.toStringAsFixed(2)}',
+                type: pnl >= 0 ? TradeLogType.win : TradeLogType.loss,
+              );
+              newPositions.removeAt(posIdx);
+              newStats = newStats.copyWith(
+                realizedPnL: newStats.realizedPnL + pnl,
+                totalTrades: newStats.totalTrades + 1,
+                winTrades:
+                    pnl > 0 ? newStats.winTrades + 1 : newStats.winTrades,
+              );
+            }
+          }
+        }
+      }
+
+      emit(state.copyWith(
+        coins: updatedCoins,
+        positions: newPositions,
+        stats: newStats,
+        marketDataMode: tickMode,
+      ));
+    } finally {
+      _tickInFlight = false;
+    }
+  }
+
+  void _onToggleBot(ToggleBot event, Emitter<TradingState> emit) {
+    final newStatus = state.botStatus == BotStatus.active
+        ? BotStatus.paused
+        : BotStatus.active;
+    emit(state.copyWith(botStatus: newStatus));
+    _addLog(
+      newStatus == BotStatus.active
+          ? '▶ Bot activated — scanning markets'
+          : '⏸ Bot paused by user',
+      newStatus == BotStatus.active ? TradeLogType.system : TradeLogType.warn,
+    );
+  }
+
+  void _onBuyCoin(BuyCoin event, Emitter<TradingState> emit) {
+    if (state.positions.any((p) => p.symbol == event.symbol)) {
+      _addLog('⚠️ Already holding ${event.symbol}', TradeLogType.warn);
+      return;
+    }
+    final coin = state.coins.firstWhere((c) => c.symbol == event.symbol);
+    final size = state.stats.capital * 0.05;
+    final pos = Position(
+      id: _uuid.v4(),
+      symbol: coin.symbol,
+      entryPrice: coin.price,
+      currentPrice: coin.price,
+      size: size,
+      quantity: size / coin.price,
+      openedAt: DateTime.now(),
+      exchange: state.selectedExchange,
+    );
+    _addLog(
+      '🟢 MANUAL BUY ${coin.symbol} @ ${coin.formattedPrice} — Size: \$${size.toStringAsFixed(0)}',
+      TradeLogType.buy,
+    );
+    _emitTradeAlert(
+      title: 'Manual Buy',
+      message: '${coin.symbol} at ${coin.formattedPrice}',
+      type: TradeLogType.buy,
+    );
+    emit(state.copyWith(
+      positions: [...state.positions, pos],
+      stats: state.stats.copyWith(totalTrades: state.stats.totalTrades + 1),
+    ));
+  }
+
+  void _onSellPosition(SellPosition event, Emitter<TradingState> emit) {
+    final pos = state.positions.firstWhere((p) => p.id == event.positionId);
+    final pnl = pos.unrealizedPnL;
+    final sign = pnl >= 0 ? '+' : '';
+    _addLog(
+      '🔴 MANUAL SELL ${pos.symbol} — PnL: $sign\$${pnl.toStringAsFixed(2)}',
+      pnl >= 0 ? TradeLogType.win : TradeLogType.loss,
+    );
+    _emitTradeAlert(
+      title: 'Manual Sell',
+      message: '${pos.symbol} · PnL $sign\$${pnl.toStringAsFixed(2)}',
+      type: pnl >= 0 ? TradeLogType.win : TradeLogType.loss,
+    );
+    emit(state.copyWith(
+      positions:
+          state.positions.where((p) => p.id != event.positionId).toList(),
+      stats: state.stats.copyWith(
+        realizedPnL: state.stats.realizedPnL + pnl,
+        totalTrades: state.stats.totalTrades + 1,
+        winTrades: pnl > 0 ? state.stats.winTrades + 1 : state.stats.winTrades,
+      ),
+    ));
+  }
+
+  void _onSelectCoin(SelectCoin event, Emitter<TradingState> emit) {
+    emit(state.copyWith(
+      selectedSymbol:
+          event.symbol == state.selectedSymbol ? null : event.symbol,
+    ));
+  }
+
+  void _onChangeExchange(ChangeExchange event, Emitter<TradingState> emit) {
+    emit(state.copyWith(selectedExchange: event.exchange));
+    _addLog('🔄 Switched to ${event.exchange.label}', TradeLogType.info);
+  }
+
+  void _onChangeTimeframe(ChangeTimeframe event, Emitter<TradingState> emit) {
+    emit(state.copyWith(selectedTimeframe: event.timeframe));
+  }
+
+  void _onChangeTab(ChangeTab event, Emitter<TradingState> emit) {
+    emit(state.copyWith(activeTab: event.tab));
+  }
+
+  void _onUpdateCapital(UpdateCapital event, Emitter<TradingState> emit) {
+    emit(state.copyWith(
+      stats: DailyStats(
+        realizedPnL: state.stats.realizedPnL,
+        unrealizedPnL: state.stats.unrealizedPnL,
+        totalTrades: state.stats.totalTrades,
+        winTrades: state.stats.winTrades,
+        capital: event.capital,
+        dailyTarget: state.stats.dailyTarget,
+      ),
+    ));
+  }
+
+  void _onUpdateAlertPreferences(
+    UpdateAlertPreferences event,
+    Emitter<TradingState> emit,
+  ) {
+    emit(state.copyWith(
+      alertsEnabled: event.alertsEnabled,
+      hapticsEnabled: event.hapticsEnabled,
+    ));
+  }
+
+  void _onResetDay(ResetDay event, Emitter<TradingState> emit) {
+    emit(state.copyWith(
+      stats: DailyStats(capital: state.stats.capital),
+      logs: [],
+    ));
+    _addLog('🔄 Daily stats reset', TradeLogType.system);
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  void _startMarketTimer() {
+    _marketTimer?.cancel();
+    _marketTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
+      add(MarketTick());
+    });
+  }
+
+  void _addLog(String message, TradeLogType type) {
+    final log = TradeLog(
+      id: _uuid.v4(),
+      timestamp: DateTime.now(),
+      message: message,
+      type: type,
+    );
+    // We need to emit but we're outside handlers — use a stream or emit directly
+    // For simplicity, we'll schedule as event
+    add(_AddLog(log));
+  }
+
+  void _emitTradeAlert({
+    required String title,
+    required String message,
+    required TradeLogType type,
+  }) {
+    if (!state.alertsEnabled) return;
+    _alertController.add(TradeAlert(
+      title: title,
+      message: message,
+      type: type,
+    ));
+  }
+
+  @override
+  Future<void> close() {
+    _marketTimer?.cancel();
+    _alertController.close();
+    return super.close();
+  }
+}
+
+class TradeAlert {
+  final String title;
+  final String message;
+  final TradeLogType type;
+
+  const TradeAlert({
+    required this.title,
+    required this.message,
+    required this.type,
+  });
+}
+
+// Internal event for adding logs
+class _AddLog extends TradingEvent {
+  final TradeLog log;
+  const _AddLog(this.log);
+  @override
+  List<Object?> get props => [log.id];
+}
