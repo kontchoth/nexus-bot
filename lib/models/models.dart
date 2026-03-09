@@ -145,6 +145,8 @@ class Position extends Equatable {
   final double quantity;
   final DateTime openedAt;
   final Exchange exchange;
+  final double stopLossPct;   // e.g. 0.05 = close if down 5%
+  final double takeProfitPct; // e.g. 0.10 = close if up 10%
 
   const Position({
     required this.id,
@@ -155,13 +157,21 @@ class Position extends Equatable {
     required this.quantity,
     required this.openedAt,
     required this.exchange,
+    this.stopLossPct = 0.05,
+    this.takeProfitPct = 0.10,
   });
 
   double get unrealizedPnL => (currentPrice - entryPrice) * quantity;
-  double get pnlPercent => ((currentPrice - entryPrice) / entryPrice) * 100;
+  double get pnlPercent => entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
   bool get isProfit => unrealizedPnL >= 0;
+  bool get isStopLossHit   => pnlPercent <= -(stopLossPct * 100);
+  bool get isTakeProfitHit => pnlPercent >=  (takeProfitPct * 100);
 
-  Position copyWith({double? currentPrice}) {
+  Position copyWith({
+    double? currentPrice,
+    double? stopLossPct,
+    double? takeProfitPct,
+  }) {
     return Position(
       id: id,
       symbol: symbol,
@@ -171,6 +181,8 @@ class Position extends Equatable {
       quantity: quantity,
       openedAt: openedAt,
       exchange: exchange,
+      stopLossPct: stopLossPct ?? this.stopLossPct,
+      takeProfitPct: takeProfitPct ?? this.takeProfitPct,
     );
   }
 
@@ -180,7 +192,7 @@ class Position extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, symbol, currentPrice];
+  List<Object?> get props => [id, symbol, currentPrice, stopLossPct, takeProfitPct];
 }
 
 // ── Trade Log Model ───────────────────────────────────────────────────────────

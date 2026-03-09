@@ -43,10 +43,13 @@ class TradingState extends Equatable {
         activeTab: 0,
       );
 
-  CoinData? get selectedCoin => selectedSymbol != null
-      ? coins.firstWhere((c) => c.symbol == selectedSymbol,
-          orElse: () => coins.first)
-      : null;
+  CoinData? get selectedCoin {
+    if (selectedSymbol == null || coins.isEmpty) return null;
+    return coins.firstWhere(
+      (c) => c.symbol == selectedSymbol,
+      orElse: () => coins.first,
+    );
+  }
 
   List<CoinData> get signalCoins =>
       coins.where((c) => c.indicators.signal != SignalType.watch).toList();

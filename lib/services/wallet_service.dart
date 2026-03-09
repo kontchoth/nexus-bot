@@ -12,7 +12,12 @@ class WalletService {
   ];
 
   Future<double> fetchEthBalance(String address) async {
-    final ethAddress = EthereumAddress.fromHex(address);
+    final EthereumAddress ethAddress;
+    try {
+      ethAddress = EthereumAddress.fromHex(address);
+    } catch (_) {
+      throw Exception('Invalid Ethereum address: $address');
+    }
     final errors = <String>[];
 
     for (final rpc in _rpcEndpoints) {

@@ -255,8 +255,16 @@ class _SignalTile extends StatelessWidget {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
+                    final bloc = context.read<TradingBloc>();
                     if (isBuy) {
-                      context.read<TradingBloc>().add(BuyCoin(coin.symbol));
+                      bloc.add(BuyCoin(coin.symbol));
+                    } else {
+                      final positions = bloc.state.positions
+                          .where((p) => p.symbol == coin.symbol)
+                          .toList();
+                      if (positions.isNotEmpty) {
+                        bloc.add(SellPosition(positions.first.id));
+                      }
                     }
                   },
                   child: Container(

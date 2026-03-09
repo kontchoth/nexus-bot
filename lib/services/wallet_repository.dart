@@ -24,7 +24,7 @@ class WalletProfile {
 
   factory WalletProfile.fromJson(Map<String, dynamic> json) {
     return WalletProfile(
-      address: json['address'] as String,
+      address: (json['address'] as String?) ?? '',
       chainId: json['chainId'] as int? ?? 1,
       network: json['network'] as String? ?? 'Ethereum Mainnet',
     );

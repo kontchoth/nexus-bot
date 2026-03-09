@@ -115,20 +115,75 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
         }
       }
 
-      // Update open positions with new prices
-      final updatedPositions = state.positions.map((pos) {
-        final coin = updatedCoins.firstWhere(
-          (c) => c.symbol == pos.symbol,
-          orElse: () => updatedCoins.first,
-        );
-        return pos.copyWith(currentPrice: coin.price);
-      }).toList();
+      // Retry live feed every 100 ticks while in simulator fallback
+      if (!_useLiveData && _tickCount % 100 == 0) {
+        try {
+          final retryCoins = await _liveMarketService.tickCoins(state.coins);
+          updatedCoins = retryCoins;
+          _useLiveData = true;
+          _liveErrorLogged = false;
+          tickMode = MarketDataMode.live;
+          _addLog('🟢 Live market feed restored', TradeLogType.system);
+        } catch (_) {
+          // Still unavailable — stay in simulator
+        }
+      }
 
-      // Auto-trade logic (every 8 ticks when bot active)
-      var newPositions = List<Position>.from(updatedPositions);
-      var newStats = state.stats.copyWith(
-        unrealizedPnL:
-            updatedPositions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL),
+      // Update open positions with new prices
+      final updatedPositions = updatedCoins.isEmpty
+          ? state.positions
+          : state.positions.map((pos) {
+              final coin = updatedCoins.firstWhere(
+                (c) => c.symbol == pos.symbol,
+                orElse: () => updatedCoins.first,
+              );
+              return pos.copyWith(currentPrice: coin.price);
+            }).toList();
+
+      var newStats = state.stats;
+
+      // ── Stop-loss / take-profit sweep (runs every tick, bot on or off) ───────
+      var newPositions = <Position>[];
+      for (final pos in updatedPositions) {
+        if (pos.isStopLossHit) {
+          final pnl = pos.unrealizedPnL;
+          _addLog(
+            '🛑 STOP-LOSS ${pos.symbol} @ ${_fmtPrice(pos.currentPrice)} — PnL: \$${pnl.toStringAsFixed(2)} (${pos.pnlPercent.toStringAsFixed(2)}%)',
+            TradeLogType.loss,
+          );
+          _emitTradeAlert(
+            title: 'Stop-Loss Triggered',
+            message: '${pos.symbol} · ${pos.pnlPercent.toStringAsFixed(2)}%',
+            type: TradeLogType.loss,
+          );
+          newStats = newStats.copyWith(
+            realizedPnL: newStats.realizedPnL + pnl,
+            totalTrades: newStats.totalTrades + 1,
+          );
+        } else if (pos.isTakeProfitHit) {
+          final pnl = pos.unrealizedPnL;
+          _addLog(
+            '🎯 TAKE-PROFIT ${pos.symbol} @ ${_fmtPrice(pos.currentPrice)} — PnL: +\$${pnl.toStringAsFixed(2)} (${pos.pnlPercent.toStringAsFixed(2)}%)',
+            TradeLogType.win,
+          );
+          _emitTradeAlert(
+            title: 'Take-Profit Hit',
+            message: '${pos.symbol} · +${pos.pnlPercent.toStringAsFixed(2)}%',
+            type: TradeLogType.win,
+          );
+          newStats = newStats.copyWith(
+            realizedPnL: newStats.realizedPnL + pnl,
+            totalTrades: newStats.totalTrades + 1,
+            winTrades: newStats.winTrades + 1,
+          );
+        } else {
+          newPositions.add(pos);
+        }
+      }
+
+      // Recalculate unrealized PnL from surviving positions only
+      newStats = newStats.copyWith(
+        unrealizedPnL: newPositions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL),
       );
 
       if (state.botStatus == BotStatus.active && _tickCount % 8 == 0) {
@@ -138,6 +193,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
           // Auto BUY
           if (sig == SignalType.buy &&
               coin.indicators.signalStrength >= 3 &&
+              coin.price > 0 &&
               !newPositions.any((p) => p.symbol == coin.symbol) &&
               newPositions.length < 8) {
             final size = state.stats.capital * 0.05;
@@ -150,6 +206,8 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
               quantity: size / coin.price,
               openedAt: DateTime.now(),
               exchange: state.selectedExchange,
+              stopLossPct: 0.05,
+              takeProfitPct: 0.10,
             );
             newPositions.add(pos);
             _addLog(
@@ -161,7 +219,6 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
               message: '${coin.symbol} at ${coin.formattedPrice}',
               type: TradeLogType.buy,
             );
-            newStats = newStats.copyWith(totalTrades: newStats.totalTrades + 1);
           }
 
           // Auto SELL
@@ -223,7 +280,16 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
       _addLog('⚠️ Already holding ${event.symbol}', TradeLogType.warn);
       return;
     }
-    final coin = state.coins.firstWhere((c) => c.symbol == event.symbol);
+    final coinIdx = state.coins.indexWhere((c) => c.symbol == event.symbol);
+    if (coinIdx == -1) {
+      _addLog('⚠️ Coin ${event.symbol} not found', TradeLogType.warn);
+      return;
+    }
+    final coin = state.coins[coinIdx];
+    if (coin.price <= 0) {
+      _addLog('⚠️ Invalid price for ${event.symbol}', TradeLogType.warn);
+      return;
+    }
     final size = state.stats.capital * 0.05;
     final pos = Position(
       id: _uuid.v4(),
@@ -234,6 +300,8 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
       quantity: size / coin.price,
       openedAt: DateTime.now(),
       exchange: state.selectedExchange,
+      stopLossPct: 0.05,
+      takeProfitPct: 0.10,
     );
     _addLog(
       '🟢 MANUAL BUY ${coin.symbol} @ ${coin.formattedPrice} — Size: \$${size.toStringAsFixed(0)}',
@@ -246,12 +314,13 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     );
     emit(state.copyWith(
       positions: [...state.positions, pos],
-      stats: state.stats.copyWith(totalTrades: state.stats.totalTrades + 1),
     ));
   }
 
   void _onSellPosition(SellPosition event, Emitter<TradingState> emit) {
-    final pos = state.positions.firstWhere((p) => p.id == event.positionId);
+    final posIdx = state.positions.indexWhere((p) => p.id == event.positionId);
+    if (posIdx == -1) return;
+    final pos = state.positions[posIdx];
     final pnl = pos.unrealizedPnL;
     final sign = pnl >= 0 ? '+' : '';
     _addLog(
@@ -268,6 +337,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
           state.positions.where((p) => p.id != event.positionId).toList(),
       stats: state.stats.copyWith(
         realizedPnL: state.stats.realizedPnL + pnl,
+        unrealizedPnL: state.stats.unrealizedPnL - pnl,
         totalTrades: state.stats.totalTrades + 1,
         winTrades: pnl > 0 ? state.stats.winTrades + 1 : state.stats.winTrades,
       ),
@@ -295,6 +365,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
   }
 
   void _onUpdateCapital(UpdateCapital event, Emitter<TradingState> emit) {
+    if (event.capital <= 0) return;
     emit(state.copyWith(
       stats: DailyStats(
         realizedPnL: state.stats.realizedPnL,
@@ -346,12 +417,16 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     add(_AddLog(log));
   }
 
+  String _fmtPrice(double p) =>
+      p >= 1000 ? p.toStringAsFixed(2) : p.toStringAsFixed(4);
+
   void _emitTradeAlert({
     required String title,
     required String message,
     required TradeLogType type,
   }) {
     if (!state.alertsEnabled) return;
+    if (_alertController.isClosed) return;
     _alertController.add(TradeAlert(
       title: title,
       message: message,

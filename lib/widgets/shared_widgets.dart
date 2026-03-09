@@ -92,6 +92,8 @@ class MiniSparkline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (prices.isEmpty) return const SizedBox(width: 80, height: 28);
+
     final color = switch (signal) {
       SignalType.buy => AppTheme.green,
       SignalType.sell => AppTheme.red,
@@ -141,19 +143,22 @@ class PriceChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (prices.isEmpty) return const SizedBox.shrink();
     final color = isPositive ? AppTheme.green : AppTheme.red;
     final spots = prices.asMap().entries
         .map((e) => FlSpot(e.key.toDouble(), e.value))
         .toList();
+
+    final maxPrice = prices.reduce((a, b) => a > b ? a : b);
+    final minPrice = prices.reduce((a, b) => a < b ? a : b);
+    final priceRange = maxPrice - minPrice;
 
     return LineChart(
       LineChartData(
         gridData: FlGridData(
           show: true,
           drawVerticalLine: false,
-          horizontalInterval: (prices.reduce((a, b) => a > b ? a : b) -
-                  prices.reduce((a, b) => a < b ? a : b)) /
-              4,
+          horizontalInterval: priceRange > 0 ? priceRange / 4 : 1,
           getDrawingHorizontalLine: (_) => FlLine(
             color: Colors.white.withOpacity(0.05),
             strokeWidth: 1,

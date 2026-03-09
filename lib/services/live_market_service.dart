@@ -52,7 +52,10 @@ class LiveMarketService {
       final price = _toDouble(ticker['lastPrice']) ?? prices.last;
       final changePercent = _toDouble(ticker['priceChangePercent']) ?? 0.0;
       final volume = _toDouble(ticker['quoteVolume']) ?? 0.0;
-      final avgVolume = max(volume, 1.0);
+      // Divide 24h total volume by candle count to get a per-candle baseline.
+      // This ensures volumeSpike (volume / avgVolume) reflects real spikes
+      // rather than always returning 1.0 when both values equal the 24h total.
+      final avgVolume = max(volume / (prices.isNotEmpty ? prices.length : 60), 1.0);
       final basePrice = changePercent == -100
           ? price
           : price / (1 + (changePercent / 100));
@@ -263,20 +266,55 @@ class LiveMarketService {
     }
     final avgGain = gains / period;
     final avgLoss = losses / period;
+    if (avgGain == 0 && avgLoss == 0) return 50;
     if (avgLoss == 0) return 100;
     final rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
   }
 
-  String _calcTrend(List<double> prices) {
-    final recent = prices.sublist(max(0, prices.length - 10));
-    return recent.last > recent.first ? 'bullish' : 'bearish';
+  // Exponential Moving Average over a price series.
+  double _ema(List<double> prices, int period) {
+    if (prices.isEmpty) return 0;
+    final k = 2.0 / (period + 1);
+    double ema = prices.first;
+    for (int i = 1; i < prices.length; i++) {
+      ema = prices[i] * k + ema * (1 - k);
+    }
+    return ema;
   }
 
-  bool _calcBBSqueeze(List<double> prices) {
-    final recent = prices.sublist(max(0, prices.length - 10));
-    final upper = recent.reduce(max);
-    final lower = recent.reduce(min);
-    return lower > 0 ? (upper - lower) / lower < 0.02 : false;
+  // Returns 'bullish' when MACD line > signal line, 'bearish' otherwise.
+  // Falls back to simple first-vs-last comparison if fewer than 26 candles.
+  String _calcTrend(List<double> prices) {
+    if (prices.length < 26) {
+      return prices.last > prices.first ? 'bullish' : 'bearish';
+    }
+    // Build MACD line: EMA(12) - EMA(26) for each point from index 25 onward.
+    // Use last 35 prices to get ~10 MACD values for a stable signal line.
+    final window = prices.sublist(max(0, prices.length - 35));
+    final macdLine = <double>[];
+    for (int i = 25; i < window.length; i++) {
+      final slice = window.sublist(0, i + 1);
+      macdLine.add(_ema(slice, 12) - _ema(slice, 26));
+    }
+    if (macdLine.length < 2) {
+      return macdLine.isNotEmpty && macdLine.last > 0 ? 'bullish' : 'bearish';
+    }
+    final signalLine = _ema(macdLine, min(9, macdLine.length));
+    return macdLine.last > signalLine ? 'bullish' : 'bearish';
+  }
+
+  // Squeeze = BB bandwidth (upper - lower) / middle < threshold.
+  // Standard params: 20-period SMA, 2 standard deviations, 5% bandwidth threshold.
+  bool _calcBBSqueeze(List<double> prices, {int period = 20, double numStd = 2.0, double threshold = 0.05}) {
+    if (prices.length < period) return false;
+    final recent = prices.sublist(prices.length - period);
+    final mean = recent.reduce((a, b) => a + b) / period;
+    final variance = recent.map((p) => (p - mean) * (p - mean)).reduce((a, b) => a + b) / period;
+    final std = sqrt(variance);
+    final upper = mean + numStd * std;
+    final lower = mean - numStd * std;
+    if (mean == 0) return false;
+    return (upper - lower) / mean < threshold;
   }
 }

@@ -24,7 +24,7 @@ dependencies:
   google_sign_in: ^6.2.1
   web3dart: ^2.7.3
   http: ^1.2.2
-  mobile_scanner: ^5.2.3
+  mobile_scanner: ^7.1.4
 
   # Charts
   fl_chart: ^0.64.0
