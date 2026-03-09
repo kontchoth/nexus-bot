@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
-import '../blocs/trading_bloc.dart';
-import '../models/models.dart';
-import '../theme/app_theme.dart';
-import '../widgets/shared_widgets.dart';
+import '../../blocs/crypto/crypto_bloc.dart';
+import '../../models/crypto_models.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/shared_widgets.dart';
 
 class ScannerScreen extends StatelessWidget {
   const ScannerScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<TradingBloc, TradingState>(
+    return BlocBuilder<CryptoBloc, CryptoState>(
       builder: (context, state) {
         return Column(
           children: [
@@ -26,7 +26,7 @@ class ScannerScreen extends StatelessWidget {
 }
 
 class _SignalSummary extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _SignalSummary({required this.state});
 
   @override
@@ -150,7 +150,7 @@ class _CoinDetailCard extends StatelessWidget {
                   label: 'BUY ${coin.symbol}',
                   borderColor: AppTheme.green,
                   textColor: AppTheme.green,
-                  onTap: () => context.read<TradingBloc>().add(BuyCoin(coin.symbol)),
+                  onTap: () => context.read<CryptoBloc>().add(BuyCoin(coin.symbol)),
                 ),
               ],
             ),
@@ -230,7 +230,7 @@ class _CoinDetailCard extends StatelessWidget {
 }
 
 class _CoinList extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _CoinList({required this.state});
 
   @override
@@ -242,7 +242,7 @@ class _CoinList extends StatelessWidget {
         final isSelected = state.selectedSymbol == coin.symbol;
         final sig = coin.indicators.signal;
         return GestureDetector(
-          onTap: () => context.read<TradingBloc>().add(SelectCoin(coin.symbol)),
+          onTap: () => context.read<CryptoBloc>().add(SelectCoin(coin.symbol)),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             decoration: BoxDecoration(
@@ -316,7 +316,7 @@ class _CoinList extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: () => context.read<TradingBloc>().add(BuyCoin(coin.symbol)),
+                  onTap: () => context.read<CryptoBloc>().add(BuyCoin(coin.symbol)),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(

@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
-import '../blocs/trading_bloc.dart';
-import '../models/models.dart';
-import '../theme/app_theme.dart';
-import '../widgets/shared_widgets.dart';
+import '../../blocs/crypto/crypto_bloc.dart';
+import '../../models/crypto_models.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/shared_widgets.dart';
 
 class PositionsScreen extends StatelessWidget {
   const PositionsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<TradingBloc, TradingState>(
+    return BlocBuilder<CryptoBloc, CryptoState>(
       builder: (context, state) {
         if (state.positions.isEmpty) {
           return _EmptyPositions();
@@ -158,7 +158,7 @@ class _PositionCard extends StatelessWidget {
               const SizedBox(width: 12),
               GestureDetector(
                 onTap: () =>
-                    context.read<TradingBloc>().add(SellPosition(pos.id)),
+                    context.read<CryptoBloc>().add(SellPosition(pos.id)),
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -196,7 +196,7 @@ class _PositionCard extends StatelessWidget {
 }
 
 class _TotalPnLBar extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _TotalPnLBar({required this.state});
 
   @override

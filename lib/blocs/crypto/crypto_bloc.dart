@@ -2,16 +2,16 @@ import 'dart:async';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:uuid/uuid.dart';
-import '../models/models.dart';
-import '../services/live_market_service.dart';
-import '../services/market_simulator.dart';
+import '../../models/crypto_models.dart';
+import '../../services/crypto/live_market_service.dart';
+import '../../services/crypto/market_simulator.dart';
 
-part 'trading_event.dart';
-part 'trading_state.dart';
+part 'crypto_event.dart';
+part 'crypto_state.dart';
 
 const _uuid = Uuid();
 
-class TradingBloc extends Bloc<TradingEvent, TradingState> {
+class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
   Timer? _marketTimer;
   int _tickCount = 0;
   final LiveMarketService _liveMarketService = LiveMarketService();
@@ -22,7 +22,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
 
   Stream<TradeAlert> get alertsStream => _alertController.stream;
 
-  TradingBloc() : super(TradingState.initial()) {
+  CryptoBloc() : super(CryptoState.initial()) {
     on<InitializeMarket>(_onInitialize);
     on<MarketTick>(_onMarketTick);
     on<ToggleBot>(_onToggleBot);
@@ -31,7 +31,6 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     on<SelectCoin>(_onSelectCoin);
     on<ChangeExchange>(_onChangeExchange);
     on<ChangeTimeframe>(_onChangeTimeframe);
-    on<ChangeTab>(_onChangeTab);
     on<UpdateCapital>(_onUpdateCapital);
     on<UpdateAlertPreferences>(_onUpdateAlertPreferences);
     on<ResetDay>(_onResetDay);
@@ -44,7 +43,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   Future<void> _onInitialize(
-      InitializeMarket event, Emitter<TradingState> emit) async {
+      InitializeMarket event, Emitter<CryptoState> emit) async {
     List<CoinData> coins;
     try {
       coins =
@@ -80,7 +79,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
   }
 
   Future<void> _onMarketTick(
-      MarketTick event, Emitter<TradingState> emit) async {
+      MarketTick event, Emitter<CryptoState> emit) async {
     if (_tickInFlight) return;
     _tickInFlight = true;
     try {
@@ -90,9 +89,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
       var tickMode = state.marketDataMode;
       try {
         if (_useLiveData) {
-          updatedCoins = await _liveMarketService.tickCoins(
-            state.coins,
-          );
+          updatedCoins = await _liveMarketService.tickCoins(state.coins);
           _liveErrorLogged = false;
           tickMode = MarketDataMode.live;
         } else {
@@ -183,7 +180,8 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
 
       // Recalculate unrealized PnL from surviving positions only
       newStats = newStats.copyWith(
-        unrealizedPnL: newPositions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL),
+        unrealizedPnL:
+            newPositions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL),
       );
 
       if (state.botStatus == BotStatus.active && _tickCount % 8 == 0) {
@@ -262,7 +260,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     }
   }
 
-  void _onToggleBot(ToggleBot event, Emitter<TradingState> emit) {
+  void _onToggleBot(ToggleBot event, Emitter<CryptoState> emit) {
     final newStatus = state.botStatus == BotStatus.active
         ? BotStatus.paused
         : BotStatus.active;
@@ -275,7 +273,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     );
   }
 
-  void _onBuyCoin(BuyCoin event, Emitter<TradingState> emit) {
+  void _onBuyCoin(BuyCoin event, Emitter<CryptoState> emit) {
     if (state.positions.any((p) => p.symbol == event.symbol)) {
       _addLog('⚠️ Already holding ${event.symbol}', TradeLogType.warn);
       return;
@@ -317,7 +315,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     ));
   }
 
-  void _onSellPosition(SellPosition event, Emitter<TradingState> emit) {
+  void _onSellPosition(SellPosition event, Emitter<CryptoState> emit) {
     final posIdx = state.positions.indexWhere((p) => p.id == event.positionId);
     if (posIdx == -1) return;
     final pos = state.positions[posIdx];
@@ -344,43 +342,32 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     ));
   }
 
-  void _onSelectCoin(SelectCoin event, Emitter<TradingState> emit) {
+  void _onSelectCoin(SelectCoin event, Emitter<CryptoState> emit) {
     emit(state.copyWith(
       selectedSymbol:
           event.symbol == state.selectedSymbol ? null : event.symbol,
     ));
   }
 
-  void _onChangeExchange(ChangeExchange event, Emitter<TradingState> emit) {
+  void _onChangeExchange(ChangeExchange event, Emitter<CryptoState> emit) {
     emit(state.copyWith(selectedExchange: event.exchange));
     _addLog('🔄 Switched to ${event.exchange.label}', TradeLogType.info);
   }
 
-  void _onChangeTimeframe(ChangeTimeframe event, Emitter<TradingState> emit) {
+  void _onChangeTimeframe(ChangeTimeframe event, Emitter<CryptoState> emit) {
     emit(state.copyWith(selectedTimeframe: event.timeframe));
   }
 
-  void _onChangeTab(ChangeTab event, Emitter<TradingState> emit) {
-    emit(state.copyWith(activeTab: event.tab));
-  }
-
-  void _onUpdateCapital(UpdateCapital event, Emitter<TradingState> emit) {
+  void _onUpdateCapital(UpdateCapital event, Emitter<CryptoState> emit) {
     if (event.capital <= 0) return;
     emit(state.copyWith(
-      stats: DailyStats(
-        realizedPnL: state.stats.realizedPnL,
-        unrealizedPnL: state.stats.unrealizedPnL,
-        totalTrades: state.stats.totalTrades,
-        winTrades: state.stats.winTrades,
-        capital: event.capital,
-        dailyTarget: state.stats.dailyTarget,
-      ),
+      stats: state.stats.copyWith(capital: event.capital),
     ));
   }
 
   void _onUpdateAlertPreferences(
     UpdateAlertPreferences event,
-    Emitter<TradingState> emit,
+    Emitter<CryptoState> emit,
   ) {
     emit(state.copyWith(
       alertsEnabled: event.alertsEnabled,
@@ -388,7 +375,7 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
     ));
   }
 
-  void _onResetDay(ResetDay event, Emitter<TradingState> emit) {
+  void _onResetDay(ResetDay event, Emitter<CryptoState> emit) {
     emit(state.copyWith(
       stats: DailyStats(capital: state.stats.capital),
       logs: [],
@@ -412,8 +399,6 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
       message: message,
       type: type,
     );
-    // We need to emit but we're outside handlers — use a stream or emit directly
-    // For simplicity, we'll schedule as event
     add(_AddLog(log));
   }
 
@@ -442,20 +427,8 @@ class TradingBloc extends Bloc<TradingEvent, TradingState> {
   }
 }
 
-class TradeAlert {
-  final String title;
-  final String message;
-  final TradeLogType type;
-
-  const TradeAlert({
-    required this.title,
-    required this.message,
-    required this.type,
-  });
-}
-
 // Internal event for adding logs
-class _AddLog extends TradingEvent {
+class _AddLog extends CryptoEvent {
   final TradeLog log;
   const _AddLog(this.log);
   @override

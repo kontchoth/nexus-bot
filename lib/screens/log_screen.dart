@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
-import '../blocs/trading_bloc.dart';
+import '../blocs/crypto/crypto_bloc.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
 
@@ -10,7 +10,7 @@ class LogScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<TradingBloc, TradingState>(
+    return BlocBuilder<CryptoBloc, CryptoState>(
       builder: (context, state) {
         if (state.logs.isEmpty) {
           return Center(

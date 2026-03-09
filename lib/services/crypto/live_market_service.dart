@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
-import '../models/models.dart';
+import '../../models/crypto_models.dart';
 
 class LiveMarketService {
   LiveMarketService()

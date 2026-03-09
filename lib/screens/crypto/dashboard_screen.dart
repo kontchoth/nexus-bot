@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
-import '../blocs/trading_bloc.dart';
-import '../models/models.dart';
-import '../theme/app_theme.dart';
-import '../widgets/shared_widgets.dart';
+import '../../blocs/crypto/crypto_bloc.dart';
+import '../../models/crypto_models.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/shared_widgets.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<TradingBloc, TradingState>(
+    return BlocBuilder<CryptoBloc, CryptoState>(
       builder: (context, state) {
         return ListView(
           padding: const EdgeInsets.all(12),
@@ -35,7 +35,7 @@ class DashboardScreen extends StatelessWidget {
 }
 
 class _PnLSection extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _PnLSection({required this.state});
 
   @override
@@ -108,7 +108,7 @@ class _PnLChip extends StatelessWidget {
 }
 
 class _StatsGrid extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _StatsGrid({required this.state});
 
   @override
@@ -149,7 +149,7 @@ class _StatsGrid extends StatelessWidget {
 }
 
 class _SignalAlerts extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _SignalAlerts({required this.state});
 
   @override
@@ -255,7 +255,7 @@ class _SignalTile extends StatelessWidget {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
-                    final bloc = context.read<TradingBloc>();
+                    final bloc = context.read<CryptoBloc>();
                     if (isBuy) {
                       bloc.add(BuyCoin(coin.symbol));
                     } else {
@@ -289,7 +289,7 @@ class _SignalTile extends StatelessWidget {
               const SizedBox(width: 8),
               GestureDetector(
                 onTap: () =>
-                    context.read<TradingBloc>().add(SelectCoin(coin.symbol)),
+                    context.read<CryptoBloc>().add(SelectCoin(coin.symbol)),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -393,7 +393,7 @@ class _StrategyPanel extends StatelessWidget {
 }
 
 class _RiskPanel extends StatelessWidget {
-  final TradingState state;
+  final CryptoState state;
   const _RiskPanel({required this.state});
 
   @override

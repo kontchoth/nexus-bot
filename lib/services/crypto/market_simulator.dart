@@ -1,5 +1,5 @@
 import 'dart:math';
-import '../models/models.dart';
+import '../../models/crypto_models.dart';
 
 class MarketSimulator {
   static final Random _rng = Random();

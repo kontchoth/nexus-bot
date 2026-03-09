@@ -1,76 +1,68 @@
-part of 'trading_bloc.dart';
+part of 'crypto_bloc.dart';
 
-abstract class TradingEvent extends Equatable {
-  const TradingEvent();
+abstract class CryptoEvent extends Equatable {
+  const CryptoEvent();
   @override
   List<Object?> get props => [];
 }
 
-class InitializeMarket extends TradingEvent {}
+class InitializeMarket extends CryptoEvent {}
 
-class MarketTick extends TradingEvent {}
+class MarketTick extends CryptoEvent {}
 
-class ToggleBot extends TradingEvent {}
+class ToggleBot extends CryptoEvent {}
 
-class ResetDay extends TradingEvent {}
+class ResetDay extends CryptoEvent {}
 
-class BuyCoin extends TradingEvent {
+class BuyCoin extends CryptoEvent {
   final String symbol;
   const BuyCoin(this.symbol);
   @override
   List<Object?> get props => [symbol];
 }
 
-class SellPosition extends TradingEvent {
+class SellPosition extends CryptoEvent {
   final String positionId;
   const SellPosition(this.positionId);
   @override
   List<Object?> get props => [positionId];
 }
 
-class SelectCoin extends TradingEvent {
+class SelectCoin extends CryptoEvent {
   final String? symbol;
   const SelectCoin(this.symbol);
   @override
   List<Object?> get props => [symbol];
 }
 
-class ChangeExchange extends TradingEvent {
+class ChangeExchange extends CryptoEvent {
   final Exchange exchange;
   const ChangeExchange(this.exchange);
   @override
   List<Object?> get props => [exchange];
 }
 
-class ChangeTimeframe extends TradingEvent {
+class ChangeTimeframe extends CryptoEvent {
   final Timeframe timeframe;
   const ChangeTimeframe(this.timeframe);
   @override
   List<Object?> get props => [timeframe];
 }
 
-class ChangeTab extends TradingEvent {
-  final int tab;
-  const ChangeTab(this.tab);
-  @override
-  List<Object?> get props => [tab];
-}
-
-class UpdateCapital extends TradingEvent {
+class UpdateCapital extends CryptoEvent {
   final double capital;
   const UpdateCapital(this.capital);
   @override
   List<Object?> get props => [capital];
 }
 
-class UpdateAlertPreferences extends TradingEvent {
+class UpdateAlertPreferences extends CryptoEvent {
   final bool alertsEnabled;
   final bool hapticsEnabled;
   const UpdateAlertPreferences({
     required this.alertsEnabled,
     required this.hapticsEnabled,
   });
-
   @override
   List<Object?> get props => [alertsEnabled, hapticsEnabled];
 }

@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import '../blocs/auth_bloc.dart';
-import '../blocs/trading_bloc.dart';
+import '../blocs/crypto/crypto_bloc.dart';
+import '../blocs/spx/spx_bloc.dart';
 import 'wallet_screen.dart';
 import '../services/auth_repository.dart';
 import '../services/app_settings_repository.dart';
 import '../theme/app_theme.dart';
+
+const _storage = FlutterSecureStorage(
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
+const _tradierTokenKey = 'tradier_api_token';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,17 +27,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hapticsEnabled = true;
   bool _loadingPrefs = true;
   bool _mfaLoading = false;
-  TradingBloc? _tradingBloc;
+  CryptoBloc? _tradingBloc;
+
+  // Tradier token
+  final _tokenController = TextEditingController();
+  bool _tokenObscured = true;
+  bool _tokenSaving = false;
 
   @override
   void initState() {
     super.initState();
     try {
-      _tradingBloc = context.read<TradingBloc>();
+      _tradingBloc = context.read<CryptoBloc>();
     } catch (_) {
       _tradingBloc = null;
     }
     _loadPrefs();
+    _loadToken();
+  }
+
+  Future<void> _loadToken() async {
+    final token = await _storage.read(key: _tradierTokenKey);
+    if (!mounted) return;
+    setState(() => _tokenController.text = token ?? '');
+  }
+
+  Future<void> _saveToken() async {
+    final token = _tokenController.text.trim();
+    setState(() => _tokenSaving = true);
+    try {
+      if (token.isEmpty) {
+        await _storage.delete(key: _tradierTokenKey);
+      } else {
+        await _storage.write(key: _tradierTokenKey, value: token);
+      }
+      if (!mounted) return;
+      // Hot-swap token in SpxBloc so the live feed retries immediately
+      try {
+        context.read<SpxBloc>().add(UpdateTradierToken(token));
+      } catch (_) {}
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(token.isEmpty
+              ? 'Tradier token cleared — using simulator'
+              : 'Tradier token saved — retrying live feed'),
+          backgroundColor: AppTheme.blue.withValues(alpha: 0.9),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _tokenSaving = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tokenController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPrefs() async {
@@ -299,6 +353,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _mfaLoading ? 'Sending code...' : 'Enable MFA',
                           ),
                         ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _SectionCard(
+                  title: 'SPX Options — Tradier API',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Enter your Tradier API token to enable live SPX options data. Leave blank to use the Black-Scholes simulator.',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _tokenController,
+                        obscureText: _tokenObscured,
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textPrimary,
+                          fontSize: 12,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'paste token here…',
+                          hintStyle: GoogleFonts.spaceGrotesk(
+                            color: AppTheme.textDim,
+                            fontSize: 12,
+                          ),
+                          filled: true,
+                          fillColor: AppTheme.bg3,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide:
+                                const BorderSide(color: AppTheme.border2),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide:
+                                const BorderSide(color: AppTheme.border2),
+                          ),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _tokenObscured
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                              size: 18,
+                              color: AppTheme.textMuted,
+                            ),
+                            onPressed: () => setState(
+                                () => _tokenObscured = !_tokenObscured),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _tokenSaving ? null : _saveToken,
+                          icon: _tokenSaving
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                )
+                              : const Icon(Icons.save_outlined, size: 16),
+                          label: Text(_tokenSaving ? 'Saving…' : 'Save token'),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.info_outline,
+                              size: 12, color: AppTheme.textDim),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              'Get a free token at tradier.com → API Access. Use sandbox for testing.',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textDim,
+                                fontSize: 10,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

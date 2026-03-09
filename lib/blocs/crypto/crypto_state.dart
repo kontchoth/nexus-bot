@@ -1,6 +1,6 @@
-part of 'trading_bloc.dart';
+part of 'crypto_bloc.dart';
 
-class TradingState extends Equatable {
+class CryptoState extends Equatable {
   final List<CoinData> coins;
   final List<Position> positions;
   final List<TradeLog> logs;
@@ -12,9 +12,8 @@ class TradingState extends Equatable {
   final bool alertsEnabled;
   final bool hapticsEnabled;
   final String? selectedSymbol;
-  final int activeTab;
 
-  const TradingState({
+  const CryptoState({
     required this.coins,
     required this.positions,
     required this.logs,
@@ -26,10 +25,9 @@ class TradingState extends Equatable {
     required this.alertsEnabled,
     required this.hapticsEnabled,
     this.selectedSymbol,
-    required this.activeTab,
   });
 
-  factory TradingState.initial() => const TradingState(
+  factory CryptoState.initial() => const CryptoState(
         coins: [],
         positions: [],
         logs: [],
@@ -40,7 +38,6 @@ class TradingState extends Equatable {
         marketDataMode: MarketDataMode.simulator,
         alertsEnabled: true,
         hapticsEnabled: true,
-        activeTab: 0,
       );
 
   CoinData? get selectedCoin {
@@ -63,7 +60,7 @@ class TradingState extends Equatable {
   double get totalUnrealizedPnL =>
       positions.fold<double>(0.0, (s, p) => s + p.unrealizedPnL);
 
-  TradingState copyWith({
+  CryptoState copyWith({
     List<CoinData>? coins,
     List<Position>? positions,
     List<TradeLog>? logs,
@@ -76,9 +73,8 @@ class TradingState extends Equatable {
     bool? hapticsEnabled,
     String? selectedSymbol,
     bool clearSelectedSymbol = false,
-    int? activeTab,
   }) {
-    return TradingState(
+    return CryptoState(
       coins: coins ?? this.coins,
       positions: positions ?? this.positions,
       logs: logs ?? this.logs,
@@ -91,7 +87,6 @@ class TradingState extends Equatable {
       hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
       selectedSymbol:
           clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
-      activeTab: activeTab ?? this.activeTab,
     );
   }
 
@@ -108,6 +103,5 @@ class TradingState extends Equatable {
         alertsEnabled,
         hapticsEnabled,
         selectedSymbol,
-        activeTab,
       ];
 }
