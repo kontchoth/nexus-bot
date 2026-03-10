@@ -2,6 +2,59 @@ part of 'spx_bloc.dart';
 
 enum SpxDataMode { live, simulator }
 enum SpxScannerStatus { active, paused }
+enum SpxTermMode { exact, range }
+
+class SpxTermFilter extends Equatable {
+  final SpxTermMode mode;
+  final int exactDte;
+  final int minDte;
+  final int maxDte;
+
+  const SpxTermFilter({
+    required this.mode,
+    required this.exactDte,
+    required this.minDte,
+    required this.maxDte,
+  });
+
+  factory SpxTermFilter.initial() => const SpxTermFilter(
+        mode: SpxTermMode.exact,
+        exactDte: 7,
+        minDte: 5,
+        maxDte: 14,
+      );
+
+  SpxTermFilter copyWith({
+    SpxTermMode? mode,
+    int? exactDte,
+    int? minDte,
+    int? maxDte,
+  }) {
+    final next = SpxTermFilter(
+      mode: mode ?? this.mode,
+      exactDte: (exactDte ?? this.exactDte).clamp(0, 365),
+      minDte: (minDte ?? this.minDte).clamp(0, 365),
+      maxDte: (maxDte ?? this.maxDte).clamp(0, 365),
+    );
+    if (next.mode == SpxTermMode.range && next.minDte > next.maxDte) {
+      return SpxTermFilter(
+        mode: next.mode,
+        exactDte: next.exactDte,
+        minDte: next.maxDte,
+        maxDte: next.maxDte,
+      );
+    }
+    return next;
+  }
+
+  bool matchesDte(int dte) {
+    if (mode == SpxTermMode.exact) return dte == exactDte;
+    return dte >= minDte && dte <= maxDte;
+  }
+
+  @override
+  List<Object?> get props => [mode, exactDte, minDte, maxDte];
+}
 
 class SpxState extends Equatable {
   /// Full options chain for the selected expiration.
@@ -36,6 +89,7 @@ class SpxState extends Equatable {
 
   /// Tradier API token (stored in-memory; persisted via flutter_secure_storage).
   final String? tradierToken;
+  final SpxTermFilter termFilter;
 
   // ── Daily P&L ─────────────────────────────────────────────────────────────
   final double realizedPnL;
@@ -54,6 +108,12 @@ class SpxState extends Equatable {
     this.selectedSymbol,
     this.gexData,
     this.tradierToken,
+    this.termFilter = const SpxTermFilter(
+      mode: SpxTermMode.exact,
+      exactDte: 7,
+      minDte: 5,
+      maxDte: 14,
+    ),
     this.realizedPnL = 0,
     this.totalTrades = 0,
     this.winTrades = 0,
@@ -67,6 +127,12 @@ class SpxState extends Equatable {
         logs: [],
         scannerStatus: SpxScannerStatus.paused,
         dataMode: SpxDataMode.simulator,
+        termFilter: SpxTermFilter(
+          mode: SpxTermMode.exact,
+          exactDte: 7,
+          minDte: 5,
+          maxDte: 14,
+        ),
       );
 
   // ── Computed ───────────────────────────────────────────────────────────────
@@ -84,6 +150,34 @@ class SpxState extends Equatable {
         .where((c) => c.expiry.toIso8601String().startsWith(selectedExpiration!))
         .toList()
       ..sort((a, b) => a.strike.compareTo(b.strike));
+  }
+
+  List<String> get termExpirations {
+    final now = DateTime.now();
+    final filtered = expirations.where((exp) {
+      final expiry = DateTime.tryParse(exp);
+      if (expiry == null) return false;
+      final dte = expiry.difference(now).inDays.clamp(0, 365);
+      return termFilter.matchesDte(dte);
+    }).toList();
+    if (filtered.isNotEmpty || expirations.isEmpty) return filtered;
+
+    final target = termFilter.mode == SpxTermMode.exact
+        ? termFilter.exactDte
+        : ((termFilter.minDte + termFilter.maxDte) / 2).round();
+    String? nearest;
+    var nearestDistance = 9999;
+    for (final exp in expirations) {
+      final expiry = DateTime.tryParse(exp);
+      if (expiry == null) continue;
+      final dte = expiry.difference(now).inDays.clamp(0, 365);
+      final distance = (dte - target).abs();
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = exp;
+      }
+    }
+    return nearest == null ? [] : [nearest];
   }
 
   /// Top-scored buy signals for the scanner card.
@@ -114,6 +208,7 @@ class SpxState extends Equatable {
     GexData? gexData,
     List<TradeLog>? logs,
     String? tradierToken,
+    SpxTermFilter? termFilter,
     double? realizedPnL,
     int? totalTrades,
     int? winTrades,
@@ -130,6 +225,7 @@ class SpxState extends Equatable {
       selectedSymbol:      clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
       gexData:             gexData            ?? this.gexData,
       tradierToken:        tradierToken       ?? this.tradierToken,
+      termFilter:          termFilter         ?? this.termFilter,
       realizedPnL:         realizedPnL        ?? this.realizedPnL,
       totalTrades:         totalTrades        ?? this.totalTrades,
       winTrades:           winTrades          ?? this.winTrades,
@@ -149,6 +245,7 @@ class SpxState extends Equatable {
         gexData,
         logs,
         tradierToken,
+        termFilter,
         realizedPnL,
         totalTrades,
         winTrades,

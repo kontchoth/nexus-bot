@@ -37,48 +37,79 @@ class _ExpirationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (state.expirations.isEmpty) return const SizedBox.shrink();
+    final expirations = state.termExpirations;
+    if (expirations.isEmpty) return const SizedBox.shrink();
+    final selected = expirations.contains(state.selectedExpiration)
+        ? state.selectedExpiration
+        : expirations.first;
+    final termLabel = state.termFilter.mode == SpxTermMode.exact
+        ? '${state.termFilter.exactDte}DTE'
+        : '${state.termFilter.minDte}-${state.termFilter.maxDte}DTE';
+
     return Container(
-      height: 36,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       color: AppTheme.bg2,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: state.expirations.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
-        itemBuilder: (context, i) {
-          final exp = state.expirations[i];
-          final isSelected = exp == state.selectedExpiration;
-          return GestureDetector(
-            onTap: () =>
-                context.read<SpxBloc>().add(SelectExpiration(exp)),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppTheme.blue.withValues(alpha: 0.15) : AppTheme.bg3,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: isSelected
-                        ? AppTheme.blue.withValues(alpha: 0.6)
-                        : AppTheme.border2,
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.blue.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: AppTheme.blue.withValues(alpha: 0.4)),
+            ),
+            child: Text(
+              termLabel,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.blue,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.bg3,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.border2),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: selected,
+                  isExpanded: true,
+                  dropdownColor: AppTheme.bg2,
+                  icon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppTheme.textMuted,
                   ),
-                ),
-                child: Text(
-                  exp,
                   style: GoogleFonts.spaceGrotesk(
-                    fontSize: 10,
-                    fontWeight:
-                        isSelected ? FontWeight.w700 : FontWeight.w400,
-                    color:
-                        isSelected ? AppTheme.blue : AppTheme.textMuted,
+                    fontSize: 11,
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w600,
                   ),
+                  items: expirations.map((exp) {
+                    final expiry = DateTime.tryParse(exp);
+                    final dte =
+                        expiry?.difference(DateTime.now()).inDays.clamp(0, 365);
+                    final label = dte == null ? exp : '$exp  ·  ${dte}DTE';
+                    return DropdownMenuItem<String>(
+                      value: exp,
+                      child: Text(label, overflow: TextOverflow.ellipsis),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    context.read<SpxBloc>().add(SelectExpiration(value));
+                  },
                 ),
               ),
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

@@ -9,7 +9,7 @@ import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'blocs/auth_bloc.dart';
 import 'blocs/crypto/crypto_bloc.dart';
 import 'blocs/spx/spx_bloc.dart';
-import 'models/crypto_models.dart';
+import 'models/models.dart';
 import 'screens/auth_screen.dart';
 import 'screens/crypto/scanner_screen.dart';
 import 'screens/crypto/positions_screen.dart';
@@ -148,6 +148,15 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         alertsEnabled: settings.alertsEnabled,
         hapticsEnabled: settings.hapticsEnabled,
       ));
+      final mode = settings.spxTermMode == 'range'
+          ? SpxTermMode.range
+          : SpxTermMode.exact;
+      _spxBloc.add(UpdateSpxTermFilter(SpxTermFilter(
+        mode: mode,
+        exactDte: settings.spxExactDte,
+        minDte: settings.spxMinDte,
+        maxDte: settings.spxMaxDte,
+      )));
     } catch (_) {
       // BLoC may have closed before async completed.
     }
@@ -195,6 +204,7 @@ class _HomeShellState extends State<HomeShell> {
     PositionsScreen(),
     DashboardScreen(),
     LogScreen(),
+    SettingsScreen(),
   ];
 
   static const _spxScreens = [
@@ -202,6 +212,7 @@ class _HomeShellState extends State<HomeShell> {
     SpxPositionsScreen(),
     SpxDashboardScreen(),
     LogScreen(),
+    SettingsScreen(),
   ];
 
   @override
@@ -423,9 +434,7 @@ class _CryptoControls extends StatelessWidget {
     return BlocBuilder<CryptoBloc, CryptoState>(
       buildWhen: (p, c) =>
           p.botStatus != c.botStatus ||
-          p.marketDataMode != c.marketDataMode ||
-          p.selectedExchange != c.selectedExchange ||
-          p.selectedTimeframe != c.selectedTimeframe,
+          p.marketDataMode != c.marketDataMode,
       builder: (context, state) {
         final isActive = state.botStatus == BotStatus.active;
         return Row(
@@ -458,22 +467,6 @@ class _CryptoControls extends StatelessWidget {
                         : AppTheme.textMuted,
                     letterSpacing: 0.5),
               ),
-            ),
-            SizedBox(width: isNarrow ? 6 : 8),
-            _CompactDropdown<Exchange>(
-              value: state.selectedExchange,
-              items: Exchange.values,
-              labelOf: (e) => e == Exchange.all ? 'All' : e.label,
-              onChanged: (e) =>
-                  context.read<CryptoBloc>().add(ChangeExchange(e!)),
-            ),
-            SizedBox(width: isNarrow ? 6 : 8),
-            _CompactDropdown<Timeframe>(
-              value: state.selectedTimeframe,
-              items: Timeframe.values,
-              labelOf: (t) => t.label,
-              onChanged: (t) =>
-                  context.read<CryptoBloc>().add(ChangeTimeframe(t!)),
             ),
             SizedBox(width: isNarrow ? 6 : 8),
             // Bot toggle
@@ -519,8 +512,6 @@ class _CryptoControls extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(width: isNarrow ? 6 : 8),
-            _SettingsButton(isNarrow: isNarrow),
           ],
         );
       },
@@ -612,99 +603,9 @@ class _SpxControls extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(width: isNarrow ? 6 : 8),
-            _SettingsButton(isNarrow: isNarrow),
           ],
         );
       },
-    );
-  }
-}
-
-class _SettingsButton extends StatelessWidget {
-  final bool isNarrow;
-  const _SettingsButton({required this.isNarrow});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => BlocProvider.value(
-            value: context.read<CryptoBloc>(),
-            child: const SettingsScreen(),
-          ),
-        ),
-      ),
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppTheme.bg3,
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: AppTheme.border2),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.settings_outlined,
-                size: 14, color: AppTheme.textMuted),
-            if (!isNarrow) ...[
-              const SizedBox(width: 4),
-              Text('SETTINGS',
-                  style: GoogleFonts.spaceGrotesk(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.textMuted)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CompactDropdown<T> extends StatelessWidget {
-  final T value;
-  final List<T> items;
-  final String Function(T) labelOf;
-  final ValueChanged<T?> onChanged;
-
-  const _CompactDropdown({
-    required this.value,
-    required this.items,
-    required this.labelOf,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.bg3,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: AppTheme.border2),
-      ),
-      child: DropdownButton<T>(
-        value: value,
-        items: items
-            .map((e) => DropdownMenuItem<T>(
-                  value: e,
-                  child: Text(labelOf(e),
-                      style: GoogleFonts.spaceGrotesk(
-                          fontSize: 10, color: AppTheme.textPrimary)),
-                ))
-            .toList(),
-        onChanged: onChanged,
-        underline: const SizedBox(),
-        dropdownColor: AppTheme.bg3,
-        icon: const Icon(Icons.arrow_drop_down,
-            size: 14, color: AppTheme.textMuted),
-        style: GoogleFonts.spaceGrotesk(
-            fontSize: 10, color: AppTheme.textPrimary),
-        isDense: true,
-      ),
     );
   }
 }
@@ -726,6 +627,7 @@ class _NexusNavBar extends StatelessWidget {
     (Icons.account_balance_wallet_outlined, 'Positions'),
     (Icons.bar_chart_rounded, 'Dashboard'),
     (Icons.receipt_long_outlined, 'Activity'),
+    (Icons.settings_outlined, 'Settings'),
   ];
 
   static const _spxItems = [
@@ -733,6 +635,7 @@ class _NexusNavBar extends StatelessWidget {
     (Icons.account_balance_wallet_outlined, 'Positions'),
     (Icons.bar_chart_rounded, 'Dashboard'),
     (Icons.receipt_long_outlined, 'Activity'),
+    (Icons.settings_outlined, 'Settings'),
   ];
 
   @override

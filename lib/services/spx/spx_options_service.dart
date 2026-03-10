@@ -29,7 +29,8 @@ class SpxOptionsService {
   final SpxOptionsSimulator _sim = SpxOptionsSimulator();
 
   bool _useLiveData = false;
-  bool _liveErrorLogged = false;
+  DateTime? _liveRetryAt;
+  int _liveFailureCount = 0;
 
   SpxOptionsService({String? apiToken, bool useSandbox = true})
       : _apiToken = apiToken,
@@ -46,11 +47,11 @@ class SpxOptionsService {
 
   // ── Public API ───────────────────────────────────────────────────────────
 
-  bool get isLive => _useLiveData;
+  bool get isLive => _canAttemptLive();
 
   /// SPX spot price.  Returns simulator value on failure.
   Future<double> fetchSpxSpot() async {
-    if (!_useLiveData || !_isMarketHours()) return _sim.spot;
+    if (!_canAttemptLive() || !_isMarketHours()) return _sim.spot;
     try {
       final uri = Uri.parse('$_baseUrl/markets/quotes?symbols=SPX&greeks=false');
       final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 5));
@@ -58,7 +59,7 @@ class SpxOptionsService {
       final data = jsonDecode(res.body);
       final last = data['quotes']['quote']['last'] as num?;
       if (last == null || last <= 0) throw Exception('Invalid quote');
-      _liveErrorLogged = false;
+      _markLiveSuccess();
       return last.toDouble();
     } catch (_) {
       _handleLiveError();
@@ -68,7 +69,7 @@ class SpxOptionsService {
 
   /// Available expiration dates for SPX options (nearest 4 by default).
   Future<List<String>> fetchExpirations({int limit = 4}) async {
-    if (!_useLiveData || !_isMarketHours()) {
+    if (!_canAttemptLive() || !_isMarketHours()) {
       return _simulatedExpirations();
     }
     try {
@@ -79,7 +80,7 @@ class SpxOptionsService {
       if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
       final data = jsonDecode(res.body);
       final dates = (data['expirations']['date'] as List).cast<String>();
-      _liveErrorLogged = false;
+      _markLiveSuccess();
       return dates.take(limit).toList();
     } catch (_) {
       _handleLiveError();
@@ -90,8 +91,8 @@ class SpxOptionsService {
   /// Full options chain for a given expiration (YYYY-MM-DD).
   /// Returns greeks-enriched [OptionsContract] list, falling back to simulator.
   Future<List<OptionsContract>> fetchChain({required String expiration}) async {
-    if (!_useLiveData || !_isMarketHours()) {
-      return _sim.refreshChain();
+    if (!_canAttemptLive() || !_isMarketHours()) {
+      return _simulatedChainForExpiration(expiration);
     }
     try {
       final uri = Uri.parse(
@@ -105,18 +106,18 @@ class SpxOptionsService {
 
       final spot = await fetchSpxSpot();
       final contracts = _parseChain(options, spot, expiration);
-      _liveErrorLogged = false;
+      _markLiveSuccess();
       return contracts;
     } catch (_) {
       _handleLiveError();
-      return _sim.refreshChain();
+      return _simulatedChainForExpiration(expiration);
     }
   }
 
   /// Lightweight tick: update premiums for open positions.
   /// Returns [OptionsContract] list with refreshed prices.
   Future<List<OptionsContract>> tickPositions(List<OptionsContract> contracts) async {
-    if (!_useLiveData || !_isMarketHours()) {
+    if (!_canAttemptLive() || !_isMarketHours()) {
       return _sim.tick();
     }
     // For a live tick we re-fetch the spot and re-price using BS greeks
@@ -125,17 +126,18 @@ class SpxOptionsService {
       final spot = await fetchSpxSpot();
       final now  = DateTime.now();
       final updated = contracts.map((c) {
+        final remainingDte = c.expiry.difference(now).inDays.clamp(0, 365);
         final newGreeks = SpxGreeksCalculator.calcGreeks(
           spot: spot,
           strike: c.strike,
-          daysToExpiry: c.daysToExpiry,
+          daysToExpiry: remainingDte,
           iv: c.impliedVolatility,
           side: c.side,
         );
         final newPrice = SpxGreeksCalculator.calcPrice(
           spot: spot,
           strike: c.strike,
-          daysToExpiry: c.daysToExpiry,
+          daysToExpiry: remainingDte,
           iv: c.impliedVolatility,
           side: c.side,
         );
@@ -144,10 +146,11 @@ class SpxOptionsService {
           ask:         newPrice * 1.01,
           lastPrice:   newPrice,
           greeks:      newGreeks,
+          daysToExpiry: remainingDte,
           lastUpdated: now,
         );
       }).toList();
-      _liveErrorLogged = false;
+      _markLiveSuccess();
       return updated;
     } catch (_) {
       _handleLiveError();
@@ -222,7 +225,11 @@ class SpxOptionsService {
     double midPrice,
   ) {
     var score = 0;
-    if (ivRank > 50) { score += 2; }
+    if (ivRank < 35) {
+      score += 2; // cheap IV favors long premium entries
+    } else if (ivRank > 75) {
+      score -= 1; // expensive IV penalizes long entries
+    }
     if (greeks.delta.abs() >= 0.20 && greeks.delta.abs() <= 0.45) { score += 1; }
     if (volume > oi * 0.05) { score += 1; }
     if (midPrice > 0.50)    { score += 1; }
@@ -235,26 +242,37 @@ class SpxOptionsService {
   // ── Market hours guard ───────────────────────────────────────────────────
 
   /// Returns true during US equities/options market hours (Mon–Fri).
-  /// Uses a conservative UTC window that covers both EST and EDT:
-  ///   EST: 09:30–16:00 ET = 14:30–21:00 UTC
-  ///   EDT: 09:30–16:00 ET = 13:30–20:00 UTC
-  /// We open the window at 13:30 UTC and close at 21:00 UTC to be safe.
+  /// Uses US Eastern time including DST approximation and common US market holidays.
   static bool _isMarketHours([DateTime? now]) {
-    final t = (now ?? DateTime.now()).toUtc();
-    if (t.weekday == DateTime.saturday || t.weekday == DateTime.sunday) {
+    final utc = (now ?? DateTime.now()).toUtc();
+    final et = utc.add(Duration(hours: _easternUtcOffsetHours(utc)));
+    if (et.weekday == DateTime.saturday || et.weekday == DateTime.sunday) {
       return false;
     }
-    final minutesUtc = t.hour * 60 + t.minute;
-    return minutesUtc >= (13 * 60 + 30) && minutesUtc < (21 * 60);
+    if (_isUsMarketHoliday(et)) return false;
+    final minutesEt = et.hour * 60 + et.minute;
+    return minutesEt >= (9 * 60 + 30) && minutesEt < (16 * 60);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   void _handleLiveError() {
-    if (!_liveErrorLogged) {
-      _liveErrorLogged = true;
-    }
-    _useLiveData = false;
+    _liveFailureCount++;
+    final backoffSeconds = _liveFailureCount <= 1
+        ? 10
+        : (_liveFailureCount <= 3 ? 30 : 120);
+    _liveRetryAt = DateTime.now().add(Duration(seconds: backoffSeconds));
+  }
+
+  void _markLiveSuccess() {
+    _liveFailureCount = 0;
+    _liveRetryAt = null;
+  }
+
+  bool _canAttemptLive() {
+    if (!_useLiveData) return false;
+    if (_liveRetryAt == null) return true;
+    return DateTime.now().isAfter(_liveRetryAt!);
   }
 
   List<String> _simulatedExpirations() {
@@ -269,6 +287,103 @@ class SpxOptionsService {
       }
     }
     return dates;
+  }
+
+  List<OptionsContract> _simulatedChainForExpiration(String expiration) {
+    final expiry = DateTime.tryParse(expiration);
+    if (expiry == null) {
+      return _sim.refreshChain();
+    }
+    final dte = expiry.difference(DateTime.now()).inDays.clamp(1, 365);
+    return _sim.refreshChain(dteDays: [dte]);
+  }
+
+  static int _easternUtcOffsetHours(DateTime utc) {
+    final year = utc.year;
+    final dstStart = _nthWeekdayOfMonthUtc(year, 3, DateTime.sunday, 2)
+        .add(const Duration(hours: 7)); // 2:00 local EST = 07:00 UTC
+    final dstEnd = _nthWeekdayOfMonthUtc(year, 11, DateTime.sunday, 1)
+        .add(const Duration(hours: 6)); // 2:00 local EDT = 06:00 UTC
+    return (utc.isAfter(dstStart) && utc.isBefore(dstEnd)) ? -4 : -5;
+  }
+
+  static DateTime _nthWeekdayOfMonthUtc(
+    int year,
+    int month,
+    int weekday,
+    int nth,
+  ) {
+    var day = DateTime.utc(year, month, 1);
+    while (day.weekday != weekday) {
+      day = day.add(const Duration(days: 1));
+    }
+    return day.add(Duration(days: (nth - 1) * 7));
+  }
+
+  static DateTime _lastWeekdayOfMonthUtc(int year, int month, int weekday) {
+    var day = DateTime.utc(year, month + 1, 0);
+    while (day.weekday != weekday) {
+      day = day.subtract(const Duration(days: 1));
+    }
+    return day;
+  }
+
+  static bool _isUsMarketHoliday(DateTime etDate) {
+    final y = etDate.year;
+    final d = DateTime.utc(y, etDate.month, etDate.day);
+    final newYear = _observedHolidayUtc(DateTime.utc(y, 1, 1));
+    final mlk = _nthWeekdayOfMonthUtc(y, 1, DateTime.monday, 3);
+    final presidents = _nthWeekdayOfMonthUtc(y, 2, DateTime.monday, 3);
+    final memorial = _lastWeekdayOfMonthUtc(y, 5, DateTime.monday);
+    final juneteenth = _observedHolidayUtc(DateTime.utc(y, 6, 19));
+    final independence = _observedHolidayUtc(DateTime.utc(y, 7, 4));
+    final labor = _nthWeekdayOfMonthUtc(y, 9, DateTime.monday, 1);
+    final thanksgiving = _nthWeekdayOfMonthUtc(y, 11, DateTime.thursday, 4);
+    final christmas = _observedHolidayUtc(DateTime.utc(y, 12, 25));
+    final goodFriday = _easterSundayUtc(y).subtract(const Duration(days: 2));
+
+    final holidays = {
+      DateTime.utc(newYear.year, newYear.month, newYear.day),
+      DateTime.utc(mlk.year, mlk.month, mlk.day),
+      DateTime.utc(presidents.year, presidents.month, presidents.day),
+      DateTime.utc(goodFriday.year, goodFriday.month, goodFriday.day),
+      DateTime.utc(memorial.year, memorial.month, memorial.day),
+      DateTime.utc(juneteenth.year, juneteenth.month, juneteenth.day),
+      DateTime.utc(independence.year, independence.month, independence.day),
+      DateTime.utc(labor.year, labor.month, labor.day),
+      DateTime.utc(thanksgiving.year, thanksgiving.month, thanksgiving.day),
+      DateTime.utc(christmas.year, christmas.month, christmas.day),
+    };
+    return holidays.contains(d);
+  }
+
+  static DateTime _observedHolidayUtc(DateTime holiday) {
+    if (holiday.weekday == DateTime.saturday) {
+      return holiday.subtract(const Duration(days: 1));
+    }
+    if (holiday.weekday == DateTime.sunday) {
+      return holiday.add(const Duration(days: 1));
+    }
+    return holiday;
+  }
+
+  // Anonymous Gregorian algorithm
+  static DateTime _easterSundayUtc(int year) {
+    final a = year % 19;
+    final b = year ~/ 100;
+    final c = year % 100;
+    final d = b ~/ 4;
+    final e = b % 4;
+    final f = (b + 8) ~/ 25;
+    final g = (b - f + 1) ~/ 3;
+    final h = (19 * a + b - d - g + 15) % 30;
+    final i = c ~/ 4;
+    final k = c % 4;
+    final l = (32 + 2 * e + 2 * i - h - k) % 7;
+    final m = (a + 11 * h + 22 * l) ~/ 451;
+    final month = (h + l - 7 * m + 114) ~/ 31;
+    final day = ((h + l - 7 * m + 114) % 31) + 1;
+    return DateTime.utc(year, month, day);
   }
 
   /// Placeholder IV history (252 points ~14–34%).

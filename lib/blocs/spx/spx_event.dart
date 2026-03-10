@@ -67,6 +67,13 @@ class UpdateTradierToken extends SpxEvent {
   List<Object?> get props => [token];
 }
 
+class UpdateSpxTermFilter extends SpxEvent {
+  final SpxTermFilter filter;
+  const UpdateSpxTermFilter(this.filter);
+  @override
+  List<Object?> get props => [filter];
+}
+
 /// Reset daily P&L and log.
 class ResetSpxDay extends SpxEvent {
   const ResetSpxDay();

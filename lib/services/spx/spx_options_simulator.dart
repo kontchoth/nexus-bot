@@ -205,7 +205,8 @@ class SpxOptionsSimulator {
     double price,
   ) {
     var score = 0;
-    if (ivRank > 50)               score += 2; // elevated IV → sell premium
+    if (ivRank < 35)               score += 2; // cheap IV favors long premium
+    else if (ivRank > 75)          score -= 1; // expensive IV penalizes longs
     if (greeks.delta.abs() >= 0.20 &&
         greeks.delta.abs() <= 0.45) { score += 1; } // target delta zone
     if (volume > oi * 0.05)        score += 1; // active volume

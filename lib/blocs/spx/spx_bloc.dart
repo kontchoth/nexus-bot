@@ -13,6 +13,12 @@ part 'spx_state.dart';
 const _uuid = Uuid();
 
 class SpxBloc extends Bloc<SpxEvent, SpxState> {
+  static const int _maxAutoPositions = 6;
+  static const double _maxAutoPerTradeNotional = 2500; // premium dollars
+  static const double _maxAutoPortfolioNotional = 12000; // premium dollars
+  static const int _maxAutoPerSide = 4;
+  static const int _maxAutoPerDteBucket = 2;
+
   Timer? _tickTimer;
   int _tickCount = 0;
   bool _tickInFlight = false;
@@ -37,6 +43,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     on<CloseSpxPosition>(_onClose);
     on<ToggleSpxScanner>(_onToggleScanner);
     on<UpdateTradierToken>(_onUpdateToken);
+    on<UpdateSpxTermFilter>(_onUpdateTermFilter);
     on<ResetSpxDay>(_onResetDay);
     on<_SpxAddLog>((event, emit) {
       final newLogs = [event.log, ...state.logs].take(80).toList();
@@ -54,12 +61,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
     // Load expirations
     final expirations = await _service.fetchExpirations();
-    final selectedExp = expirations.isNotEmpty ? expirations.first : null;
+    final filteredExp = _filterExpirationsByTerm(expirations, state.termFilter);
+    final selectedExp = filteredExp.isNotEmpty ? filteredExp.first : null;
 
     // Load chain for first expiration
     final chain = selectedExp != null
         ? await _service.fetchChain(expiration: selectedExp)
-        : _sim.refreshChain();
+        : _sim.refreshChain(dteDays: _simDteDays(state.termFilter));
 
     final spot = await _service.fetchSpxSpot();
 
@@ -213,13 +221,21 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     _chainRefreshInFlight = true;
     try {
       final exp   = state.selectedExpiration;
-      final chain = exp != null
-          ? await _service.fetchChain(expiration: exp)
-          : _sim.refreshChain();
+      final fallbackExp = state.termExpirations.isNotEmpty ? state.termExpirations.first : null;
+      final selectedExp = exp ?? fallbackExp;
+      final chain = selectedExp != null
+          ? await _service.fetchChain(expiration: selectedExp)
+          : _sim.refreshChain(dteDays: _simDteDays(state.termFilter));
       final spot   = await _service.fetchSpxSpot();
       final gex    = SpxGreeksCalculator.calcGex(chain, spot);
       final mode   = _service.isLive ? SpxDataMode.live : SpxDataMode.simulator;
-      emit(state.copyWith(chain: chain, spotPrice: spot, gexData: gex, dataMode: mode));
+      emit(state.copyWith(
+        chain: chain,
+        spotPrice: spot,
+        gexData: gex,
+        dataMode: mode,
+        selectedExpiration: selectedExp,
+      ));
     } finally {
       _chainRefreshInFlight = false;
     }
@@ -329,6 +345,40 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     add(const InitializeSpx());
   }
 
+  Future<void> _onUpdateTermFilter(
+    UpdateSpxTermFilter event,
+    Emitter<SpxState> emit,
+  ) async {
+    final filteredExp = _filterExpirationsByTerm(state.expirations, event.filter);
+    final selectedExp = filteredExp.contains(state.selectedExpiration)
+        ? state.selectedExpiration
+        : (filteredExp.isNotEmpty ? filteredExp.first : null);
+
+    emit(state.copyWith(
+      termFilter: event.filter,
+      selectedExpiration: selectedExp,
+    ));
+
+    final chain = selectedExp != null
+        ? await _service.fetchChain(expiration: selectedExp)
+        : _sim.refreshChain(dteDays: _simDteDays(event.filter));
+    final spot = await _service.fetchSpxSpot();
+    final gex  = SpxGreeksCalculator.calcGex(chain, spot);
+    final mode = _service.isLive ? SpxDataMode.live : SpxDataMode.simulator;
+
+    emit(state.copyWith(
+      chain: chain,
+      spotPrice: spot,
+      gexData: gex,
+      dataMode: mode,
+    ));
+
+    final label = event.filter.mode == SpxTermMode.exact
+        ? 'Exact ${event.filter.exactDte}DTE'
+        : 'Range ${event.filter.minDte}-${event.filter.maxDte}DTE';
+    _addLog('🧭 SPX terms updated — $label', TradeLogType.info);
+  }
+
   void _onResetDay(ResetSpxDay event, Emitter<SpxState> emit) {
     emit(state.copyWith(
       logs:        [],
@@ -350,12 +400,29 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     int winTrades,
   ) {
     final positions = List<SpxPosition>.from(current);
+    var totalNotional = positions.fold<double>(
+      0,
+      (sum, p) => sum + (p.currentPremium * p.contracts * 100),
+    );
 
     for (final contract in chain) {
       if (contract.signal != SpxSignalType.buy) continue;
-      if (positions.length >= 6) break;
+      if (positions.length >= _maxAutoPositions) break;
       if (positions.any((p) => p.contract.symbol == contract.symbol)) continue;
       if (contract.midPrice <= 0) continue;
+      final orderNotional = contract.midPrice * 100;
+      if (orderNotional > _maxAutoPerTradeNotional) continue;
+      if (totalNotional + orderNotional > _maxAutoPortfolioNotional) continue;
+
+      final sameSide = positions
+          .where((p) => p.contract.side == contract.side)
+          .length;
+      if (sameSide >= _maxAutoPerSide) continue;
+
+      final sameDteBucket = positions
+          .where((p) => p.contract.daysToExpiry == contract.daysToExpiry)
+          .length;
+      if (sameDteBucket >= _maxAutoPerDteBucket) continue;
 
       final pos = SpxPosition(
         id:             _uuid.v4(),
@@ -366,6 +433,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         openedAt:       DateTime.now(),
       );
       positions.add(pos);
+      totalNotional += orderNotional;
       _addLog(
         '🤖 AUTO ${contract.side.name.toUpperCase()} '
         '${contract.symbol} @ \$${contract.midPrice.toStringAsFixed(2)}'
@@ -398,6 +466,50 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       message:   message,
       type:      type,
     )));
+  }
+
+  List<String> _filterExpirationsByTerm(
+    List<String> expirations,
+    SpxTermFilter filter,
+  ) {
+    final now = DateTime.now();
+    final filtered = expirations.where((exp) {
+      final expiry = DateTime.tryParse(exp);
+      if (expiry == null) return false;
+      final dte = expiry.difference(now).inDays.clamp(0, 365);
+      return filter.matchesDte(dte);
+    }).toList();
+    if (filtered.isNotEmpty || expirations.isEmpty) return filtered;
+
+    final target = filter.mode == SpxTermMode.exact
+        ? filter.exactDte
+        : ((filter.minDte + filter.maxDte) / 2).round();
+    String? nearest;
+    var nearestDistance = 9999;
+    for (final exp in expirations) {
+      final expiry = DateTime.tryParse(exp);
+      if (expiry == null) continue;
+      final dte = expiry.difference(now).inDays.clamp(0, 365);
+      final distance = (dte - target).abs();
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = exp;
+      }
+    }
+    return nearest == null ? [] : [nearest];
+  }
+
+  List<int> _simDteDays(SpxTermFilter filter) {
+    int normalize(int dte) => dte < 1 ? 1 : dte;
+    if (filter.mode == SpxTermMode.exact) {
+      return [normalize(filter.exactDte)];
+    }
+    return {
+      normalize(filter.minDte),
+      normalize(((filter.minDte + filter.maxDte) / 2).round()),
+      normalize(filter.maxDte),
+    }.toList()
+      ..sort();
   }
 
   void _emitAlert({

@@ -6,6 +6,7 @@ import '../blocs/auth_bloc.dart';
 import '../blocs/crypto/crypto_bloc.dart';
 import '../blocs/spx/spx_bloc.dart';
 import 'wallet_screen.dart';
+import '../models/crypto_models.dart';
 import '../services/auth_repository.dart';
 import '../services/app_settings_repository.dart';
 import '../theme/app_theme.dart';
@@ -33,6 +34,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _tokenController = TextEditingController();
   bool _tokenObscured = true;
   bool _tokenSaving = false;
+  SpxTermMode _spxTermMode = SpxTermMode.exact;
+  int _spxExactDte = 7;
+  int _spxMinDte = 5;
+  int _spxMaxDte = 14;
 
   @override
   void initState() {
@@ -100,6 +105,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _alertsEnabled = settings.alertsEnabled;
       _hapticsEnabled = settings.hapticsEnabled;
+      _spxTermMode =
+          settings.spxTermMode == 'range' ? SpxTermMode.range : SpxTermMode.exact;
+      _spxExactDte = settings.spxExactDte;
+      _spxMinDte = settings.spxMinDte;
+      _spxMaxDte = settings.spxMaxDte < settings.spxMinDte
+          ? settings.spxMinDte
+          : settings.spxMaxDte;
       _loadingPrefs = false;
     });
     _tradingBloc?.add(
@@ -118,8 +130,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
           AppPreferences(
             alertsEnabled: _alertsEnabled,
             hapticsEnabled: _hapticsEnabled,
+            spxTermMode: _spxTermMode == SpxTermMode.range ? 'range' : 'exact',
+            spxExactDte: _spxExactDte,
+            spxMinDte: _spxMinDte,
+            spxMaxDte: _spxMaxDte,
           ),
         );
+  }
+
+  void _pushSpxTermFilter() {
+    try {
+      context.read<SpxBloc>().add(
+            UpdateSpxTermFilter(
+              SpxTermFilter(
+                mode: _spxTermMode,
+                exactDte: _spxExactDte,
+                minDte: _spxMinDte,
+                maxDte: _spxMaxDte,
+              ),
+            ),
+          );
+    } catch (_) {}
+  }
+
+  void _setExactDte(int value) {
+    final next = value.clamp(0, 365);
+    setState(() => _spxExactDte = next);
+    _pushSpxTermFilter();
+    _persistPrefs();
+  }
+
+  void _setRange({int? minDte, int? maxDte}) {
+    var nextMin = (minDte ?? _spxMinDte).clamp(0, 365);
+    var nextMax = (maxDte ?? _spxMaxDte).clamp(0, 365);
+    if (nextMax < nextMin) nextMax = nextMin;
+    setState(() {
+      _spxMinDte = nextMin;
+      _spxMaxDte = nextMax;
+    });
+    _pushSpxTermFilter();
+    _persistPrefs();
   }
 
   Future<void> _enableMfa() async {
@@ -451,6 +501,139 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 12),
                 _SectionCard(
+                  title: 'Crypto Scanner Controls',
+                  child: BlocBuilder<CryptoBloc, CryptoState>(
+                    builder: (context, cryptoState) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Moved from the top bar for easier access and fewer accidental taps.',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _SelectCard<Exchange>(
+                                  label: 'Exchange',
+                                  value: cryptoState.selectedExchange,
+                                  items: Exchange.values,
+                                  itemLabel: (e) =>
+                                      e == Exchange.all ? 'All' : e.label,
+                                  onChanged: (e) {
+                                    if (e == null) return;
+                                    context
+                                        .read<CryptoBloc>()
+                                        .add(ChangeExchange(e));
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _SelectCard<Timeframe>(
+                                  label: 'Timeframe',
+                                  value: cryptoState.selectedTimeframe,
+                                  items: Timeframe.values,
+                                  itemLabel: (t) => t.label,
+                                  onChanged: (t) {
+                                    if (t == null) return;
+                                    context
+                                        .read<CryptoBloc>()
+                                        .add(ChangeTimeframe(t));
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _SectionCard(
+                  title: 'SPX Terms (DTE)',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Choose an exact DTE or a DTE range for SPX expirations.',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SegmentedButton<SpxTermMode>(
+                        segments: const [
+                          ButtonSegment<SpxTermMode>(
+                            value: SpxTermMode.exact,
+                            label: Text('Exact DTE'),
+                          ),
+                          ButtonSegment<SpxTermMode>(
+                            value: SpxTermMode.range,
+                            label: Text('DTE Range'),
+                          ),
+                        ],
+                        selected: {_spxTermMode},
+                        onSelectionChanged: (selection) {
+                          final selected = selection.first;
+                          setState(() => _spxTermMode = selected);
+                          _pushSpxTermFilter();
+                          _persistPrefs();
+                        },
+                        style: ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                          textStyle: WidgetStatePropertyAll(
+                            GoogleFonts.spaceGrotesk(fontSize: 11),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (_spxTermMode == SpxTermMode.exact)
+                        _DteStepper(
+                          label: 'Exact DTE',
+                          value: _spxExactDte,
+                          onMinus: () => _setExactDte(_spxExactDte - 1),
+                          onPlus: () => _setExactDte(_spxExactDte + 1),
+                        )
+                      else
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _DteStepper(
+                                label: 'Min DTE',
+                                value: _spxMinDte,
+                                onMinus: () =>
+                                    _setRange(minDte: _spxMinDte - 1),
+                                onPlus: () =>
+                                    _setRange(minDte: _spxMinDte + 1),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _DteStepper(
+                                label: 'Max DTE',
+                                value: _spxMaxDte,
+                                onMinus: () =>
+                                    _setRange(maxDte: _spxMaxDte - 1),
+                                onPlus: () =>
+                                    _setRange(maxDte: _spxMaxDte + 1),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _SectionCard(
                   title: 'Preferences',
                   child: Column(
                     children: [
@@ -546,6 +729,122 @@ class _SectionCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           child,
+        ],
+      ),
+    );
+  }
+}
+
+class _SelectCard<T> extends StatelessWidget {
+  final String label;
+  final T value;
+  final List<T> items;
+  final String Function(T) itemLabel;
+  final ValueChanged<T?> onChanged;
+
+  const _SelectCard({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.itemLabel,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.bg3,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppTheme.border2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 9,
+              color: AppTheme.textDim,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              isExpanded: true,
+              dropdownColor: AppTheme.bg2,
+              icon: const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: AppTheme.textMuted,
+              ),
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 12,
+                color: AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+              items: items
+                  .map(
+                    (e) => DropdownMenuItem<T>(
+                      value: e,
+                      child: Text(itemLabel(e)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DteStepper extends StatelessWidget {
+  final String label;
+  final int value;
+  final VoidCallback onMinus;
+  final VoidCallback onPlus;
+
+  const _DteStepper({
+    required this.label,
+    required this.value,
+    required this.onMinus,
+    required this.onPlus,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.bg3,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppTheme.border2),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '$label: $value',
+              style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onMinus,
+            icon: const Icon(Icons.remove_rounded, size: 16),
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            onPressed: onPlus,
+            icon: const Icon(Icons.add_rounded, size: 16),
+            visualDensity: VisualDensity.compact,
+          ),
         ],
       ),
     );
