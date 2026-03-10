@@ -6,6 +6,8 @@ import '../../models/spx_models.dart';
 import '../../services/spx/spx_greeks_calculator.dart';
 import '../../services/spx/spx_options_service.dart';
 import '../../services/spx/spx_options_simulator.dart';
+import '../../services/spx/spx_trade_journal_codes.dart';
+import '../../services/spx/spx_trade_journal_repository.dart';
 
 part 'spx_event.dart';
 part 'spx_state.dart';
@@ -26,13 +28,25 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
   SpxOptionsService _service;
   final SpxOptionsSimulator _sim = SpxOptionsSimulator();
+  final SpxTradeJournalRepository _journal;
+  final String _userId;
 
   // Alert stream (mirrors CryptoBloc pattern)
   final _alertController = StreamController<TradeAlert>.broadcast();
   Stream<TradeAlert> get alertsStream => _alertController.stream;
 
-  SpxBloc({String? tradierToken})
-      : _service = SpxOptionsService(apiToken: tradierToken),
+  SpxBloc({
+    String? tradierToken,
+    required String userId,
+    SpxTradeJournalRepository? journalRepository,
+  })
+      : _service = SpxOptionsService(
+          apiToken: tradierToken,
+          useSandbox: false,
+          enforceMarketHours: false,
+        ),
+        _journal = journalRepository ?? FirebaseSpxTradeJournalRepository(),
+        _userId = userId,
         super(SpxState.initial()) {
     on<InitializeSpx>(_onInitialize);
     on<SpxMarketTick>(_onMarketTick);
@@ -63,11 +77,19 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     final expirations = await _service.fetchExpirations();
     final filteredExp = _filterExpirationsByTerm(expirations, state.termFilter);
     final selectedExp = filteredExp.isNotEmpty ? filteredExp.first : null;
+    if (selectedExp == null && state.termFilter.mode == SpxTermMode.exact) {
+      _addLog(
+        '⚠️ No expiration available for ${state.termFilter.exactDte}DTE',
+        TradeLogType.warn,
+      );
+    }
 
     // Load chain for first expiration
     final chain = selectedExp != null
         ? await _service.fetchChain(expiration: selectedExp)
-        : _sim.refreshChain(dteDays: _simDteDays(state.termFilter));
+        : (state.termFilter.mode == SpxTermMode.exact
+            ? <OptionsContract>[]
+            : _sim.refreshChain(dteDays: _simDteDays(state.termFilter)));
 
     final spot = await _service.fetchSpxSpot();
 
@@ -142,6 +164,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       for (final pos in updatedPositions) {
         if (pos.isStopLossHit) {
           final pnl = pos.unrealizedPnL;
+          _recordExit(
+            pos,
+            exitReasonCode: SpxExitReasonCodes.stopLoss,
+            exitReasonText: 'Position hit stop-loss threshold.',
+            pnlUsd: pnl,
+          );
           _addLog(
             '🛑 STOP-LOSS ${pos.contract.symbol} — PnL: \$${pnl.toStringAsFixed(2)}',
             TradeLogType.loss,
@@ -155,6 +183,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
           totalTrades++;
         } else if (pos.isTakeProfitHit) {
           final pnl = pos.unrealizedPnL;
+          _recordExit(
+            pos,
+            exitReasonCode: SpxExitReasonCodes.takeProfit,
+            exitReasonText: 'Position hit take-profit threshold.',
+            pnlUsd: pnl,
+          );
           _addLog(
             '🎯 TAKE-PROFIT ${pos.contract.symbol} — PnL: +\$${pnl.toStringAsFixed(2)}',
             TradeLogType.win,
@@ -168,6 +202,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
           totalTrades++;
           winTrades++;
         } else if (pos.isExpired) {
+          _recordExit(
+            pos,
+            exitReasonCode: SpxExitReasonCodes.expired,
+            exitReasonText: 'Contract reached expiry.',
+            pnlUsd: pos.unrealizedPnL,
+          );
           _addLog(
             '⏱ EXPIRED ${pos.contract.symbol} — position closed at expiry',
             TradeLogType.warn,
@@ -225,7 +265,9 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       final selectedExp = exp ?? fallbackExp;
       final chain = selectedExp != null
           ? await _service.fetchChain(expiration: selectedExp)
-          : _sim.refreshChain(dteDays: _simDteDays(state.termFilter));
+          : (state.termFilter.mode == SpxTermMode.exact
+              ? <OptionsContract>[]
+              : _sim.refreshChain(dteDays: _simDteDays(state.termFilter)));
       final spot   = await _service.fetchSpxSpot();
       final gex    = SpxGreeksCalculator.calcGex(chain, spot);
       final mode   = _service.isLive ? SpxDataMode.live : SpxDataMode.simulator;
@@ -295,6 +337,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       message: '${contract.symbol} · \$${contract.midPrice.toStringAsFixed(2)}',
       type:    TradeLogType.buy,
     );
+    _recordEntry(
+      pos,
+      entrySource: 'manual', // free-form source bucket (manual | auto)
+      entryReasonCode: SpxEntryReasonCodes.manualBuy,
+      entryReasonText: 'Manual buy from chain/dashboard action.',
+    );
 
     emit(state.copyWith(positions: [...state.positions, pos]));
   }
@@ -304,6 +352,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     if (idx == -1) return;
     final pos = state.positions[idx];
     final pnl = pos.unrealizedPnL;
+    _recordExit(
+      pos,
+      exitReasonCode: SpxExitReasonCodes.manualClose,
+      exitReasonText: 'Manual close from positions screen.',
+      pnlUsd: pnl,
+    );
     final sign = pnl >= 0 ? '+' : '';
     _addLog(
       '🔴 CLOSE ${pos.contract.symbol} — PnL: $sign\$${pnl.toStringAsFixed(2)}',
@@ -339,7 +393,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     UpdateTradierToken event,
     Emitter<SpxState> emit,
   ) async {
-    _service = SpxOptionsService(apiToken: event.token);
+    _service = SpxOptionsService(
+      apiToken: event.token,
+      useSandbox: false,
+      enforceMarketHours: false,
+    );
     emit(state.copyWith(tradierToken: event.token));
     _addLog('🔑 Tradier token updated — retrying live feed', TradeLogType.system);
     add(const InitializeSpx());
@@ -353,6 +411,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     final selectedExp = filteredExp.contains(state.selectedExpiration)
         ? state.selectedExpiration
         : (filteredExp.isNotEmpty ? filteredExp.first : null);
+    if (selectedExp == null && event.filter.mode == SpxTermMode.exact) {
+      _addLog(
+        '⚠️ No expiration available for ${event.filter.exactDte}DTE',
+        TradeLogType.warn,
+      );
+    }
 
     emit(state.copyWith(
       termFilter: event.filter,
@@ -361,7 +425,9 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
     final chain = selectedExp != null
         ? await _service.fetchChain(expiration: selectedExp)
-        : _sim.refreshChain(dteDays: _simDteDays(event.filter));
+        : (event.filter.mode == SpxTermMode.exact
+            ? <OptionsContract>[]
+            : _sim.refreshChain(dteDays: _simDteDays(event.filter)));
     final spot = await _service.fetchSpxSpot();
     final gex  = SpxGreeksCalculator.calcGex(chain, spot);
     final mode = _service.isLive ? SpxDataMode.live : SpxDataMode.simulator;
@@ -445,6 +511,12 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         message: '${contract.symbol} · ${contract.daysToExpiry}DTE',
         type:    TradeLogType.buy,
       );
+      _recordEntry(
+        pos,
+        entrySource: 'auto', // free-form source bucket (manual | auto)
+        entryReasonCode: SpxEntryReasonCodes.autoScannerSignal,
+        entryReasonText: 'Auto scanner selected buy signal contract.',
+      );
     }
 
     return (positions, realizedPnL, totalTrades, winTrades);
@@ -480,10 +552,9 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       return filter.matchesDte(dte);
     }).toList();
     if (filtered.isNotEmpty || expirations.isEmpty) return filtered;
+    if (filter.mode == SpxTermMode.exact) return [];
 
-    final target = filter.mode == SpxTermMode.exact
-        ? filter.exactDte
-        : ((filter.minDte + filter.maxDte) / 2).round();
+    final target = ((filter.minDte + filter.maxDte) / 2).round();
     String? nearest;
     var nearestDistance = 9999;
     for (final exp in expirations) {
@@ -519,6 +590,102 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
   }) {
     if (_alertController.isClosed) return;
     _alertController.add(TradeAlert(title: title, message: message, type: type));
+  }
+
+  void _recordEntry(
+    SpxPosition pos, {
+    required String entrySource,
+    required String entryReasonCode,
+    required String entryReasonText,
+  }) {
+    final contract = pos.contract;
+    final record = SpxTradeJournalRecord(
+      tradeId: pos.id,
+      positionId: pos.id,
+      symbol: contract.symbol,
+      side: contract.side.name,
+      strike: contract.strike,
+      expiryIso: contract.expiry.toIso8601String(),
+      enteredAt: pos.openedAt,
+      dteEntry: contract.daysToExpiry,
+      entrySource: entrySource,
+      entryReasonCode: entryReasonCode,
+      entryReasonText: entryReasonText,
+      signalScore: _signalScore(contract),
+      signalDetails: _signalDetails(contract),
+      contracts: pos.contracts,
+      entryPremium: pos.entryPremium,
+      spotEntry: state.spotPrice,
+      ivRankEntry: contract.ivRank,
+      dataMode: state.dataMode.name,
+      termMode: state.termFilter.mode.name,
+      termExactDte: state.termFilter.exactDte,
+      termMinDte: state.termFilter.minDte,
+      termMaxDte: state.termFilter.maxDte,
+      updatedAt: DateTime.now(),
+    );
+    unawaited(_journal.recordEntry(_userId, record));
+  }
+
+  void _recordExit(
+    SpxPosition pos, {
+    required String exitReasonCode,
+    required String exitReasonText,
+    required double pnlUsd,
+  }) {
+    unawaited(_journal.recordExit(
+      _userId,
+      tradeId: pos.id,
+      exitedAt: DateTime.now(),
+      dteExit: pos.contract.daysToExpiry,
+      exitPremium: pos.currentPremium,
+      pnlUsd: pnlUsd,
+      pnlPct: pos.pnlPercent,
+      exitReasonCode: exitReasonCode,
+      exitReasonText: exitReasonText,
+      spotExit: state.spotPrice,
+      ivRankExit: pos.contract.ivRank,
+    ));
+  }
+
+  int _signalScore(OptionsContract contract) {
+    var score = 0;
+    if (contract.ivRank < 35) {
+      score += 2;
+    } else if (contract.ivRank > 75) {
+      score -= 1;
+    }
+    if (contract.greeks.delta.abs() >= 0.20 &&
+        contract.greeks.delta.abs() <= 0.45) {
+      score += 1;
+    }
+    if (contract.volume > contract.openInterest * 0.05) score += 1;
+    if (contract.midPrice > 0.50) score += 1;
+    return score;
+  }
+
+  Map<String, dynamic> _signalDetails(OptionsContract contract) {
+    return {
+      'ivRank': contract.ivRank,
+      'ivRankLowFavorsLong': contract.ivRank < 35,
+      'delta': contract.greeks.delta,
+      'deltaInTargetRange':
+          contract.greeks.delta.abs() >= 0.20 &&
+              contract.greeks.delta.abs() <= 0.45,
+      'volume': contract.volume,
+      'openInterest': contract.openInterest,
+      'volumeVsOiRatio': contract.openInterest <= 0
+          ? null
+          : contract.volume / contract.openInterest,
+      'midPrice': contract.midPrice,
+      'dte': contract.daysToExpiry,
+      'iv': contract.impliedVolatility,
+      'signalType': contract.signal.name,
+      'termMode': state.termFilter.mode.name,
+      'termExactDte': state.termFilter.exactDte,
+      'termMinDte': state.termFilter.minDte,
+      'termMaxDte': state.termFilter.maxDte,
+    };
   }
 
   @override

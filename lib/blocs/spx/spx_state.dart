@@ -161,10 +161,9 @@ class SpxState extends Equatable {
       return termFilter.matchesDte(dte);
     }).toList();
     if (filtered.isNotEmpty || expirations.isEmpty) return filtered;
+    if (termFilter.mode == SpxTermMode.exact) return [];
 
-    final target = termFilter.mode == SpxTermMode.exact
-        ? termFilter.exactDte
-        : ((termFilter.minDte + termFilter.maxDte) / 2).round();
+    final target = ((termFilter.minDte + termFilter.maxDte) / 2).round();
     String? nearest;
     var nearestDistance = 9999;
     for (final exp in expirations) {

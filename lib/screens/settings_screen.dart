@@ -54,7 +54,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadToken() async {
     final token = await _storage.read(key: _tradierTokenKey);
     if (!mounted) return;
-    setState(() => _tokenController.text = token ?? '');
+    final normalized = (token ?? '').trim();
+    setState(() => _tokenController.text = normalized);
+    if (normalized.isEmpty) return;
+    try {
+      context.read<SpxBloc>().add(UpdateTradierToken(normalized));
+    } catch (_) {}
   }
 
   Future<void> _saveToken() async {

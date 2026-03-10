@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../models/spx_models.dart';
 import 'spx_greeks_calculator.dart';
@@ -26,16 +27,27 @@ class SpxOptionsService {
 
   final String? _apiToken;
   final bool _useSandbox;
+  final bool _enforceMarketHours;
   final SpxOptionsSimulator _sim = SpxOptionsSimulator();
 
   bool _useLiveData = false;
   DateTime? _liveRetryAt;
   int _liveFailureCount = 0;
 
-  SpxOptionsService({String? apiToken, bool useSandbox = true})
+  SpxOptionsService({
+    String? apiToken,
+    bool useSandbox = false,
+    bool enforceMarketHours = false,
+  })
       : _apiToken = apiToken,
-        _useSandbox = useSandbox {
+        _useSandbox = useSandbox,
+        _enforceMarketHours = enforceMarketHours {
     _useLiveData = apiToken != null && apiToken.isNotEmpty;
+    _liveLog(
+      'init token=${_useLiveData ? 'present' : 'missing'} '
+      'endpoint=${_useSandbox ? 'sandbox' : 'production'} '
+      'marketHoursGuard=$_enforceMarketHours',
+    );
   }
 
   String get _baseUrl => _useSandbox ? _sandboxBase : _productionBase;
@@ -47,11 +59,14 @@ class SpxOptionsService {
 
   // ── Public API ───────────────────────────────────────────────────────────
 
-  bool get isLive => _canAttemptLive();
+  bool get isLive => _canAttemptLive() && (!_enforceMarketHours || _isMarketHours());
 
   /// SPX spot price.  Returns simulator value on failure.
   Future<double> fetchSpxSpot() async {
-    if (!_canAttemptLive() || !_isMarketHours()) return _sim.spot;
+    if (!_shouldAttemptLive()) {
+      _liveLog('spot -> simulator (${_liveSkipReason()})');
+      return _sim.spot;
+    }
     try {
       final uri = Uri.parse('$_baseUrl/markets/quotes?symbols=SPX&greeks=false');
       final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 5));
@@ -61,15 +76,17 @@ class SpxOptionsService {
       if (last == null || last <= 0) throw Exception('Invalid quote');
       _markLiveSuccess();
       return last.toDouble();
-    } catch (_) {
-      _handleLiveError();
+    } catch (e) {
+      _liveLog('spot live request failed: $e');
+      _handleLiveError(error: e);
       return _sim.spot;
     }
   }
 
   /// Available expiration dates for SPX options (nearest 4 by default).
   Future<List<String>> fetchExpirations({int limit = 4}) async {
-    if (!_canAttemptLive() || !_isMarketHours()) {
+    if (!_shouldAttemptLive()) {
+      _liveLog('expirations -> simulator (${_liveSkipReason()})');
       return _simulatedExpirations();
     }
     try {
@@ -82,8 +99,9 @@ class SpxOptionsService {
       final dates = (data['expirations']['date'] as List).cast<String>();
       _markLiveSuccess();
       return dates.take(limit).toList();
-    } catch (_) {
-      _handleLiveError();
+    } catch (e) {
+      _liveLog('expirations live request failed: $e');
+      _handleLiveError(error: e);
       return _simulatedExpirations();
     }
   }
@@ -91,7 +109,8 @@ class SpxOptionsService {
   /// Full options chain for a given expiration (YYYY-MM-DD).
   /// Returns greeks-enriched [OptionsContract] list, falling back to simulator.
   Future<List<OptionsContract>> fetchChain({required String expiration}) async {
-    if (!_canAttemptLive() || !_isMarketHours()) {
+    if (!_shouldAttemptLive()) {
+      _liveLog('chain($expiration) -> simulator (${_liveSkipReason()})');
       return _simulatedChainForExpiration(expiration);
     }
     try {
@@ -108,8 +127,9 @@ class SpxOptionsService {
       final contracts = _parseChain(options, spot, expiration);
       _markLiveSuccess();
       return contracts;
-    } catch (_) {
-      _handleLiveError();
+    } catch (e) {
+      _liveLog('chain($expiration) live request failed: $e');
+      _handleLiveError(error: e);
       return _simulatedChainForExpiration(expiration);
     }
   }
@@ -117,7 +137,8 @@ class SpxOptionsService {
   /// Lightweight tick: update premiums for open positions.
   /// Returns [OptionsContract] list with refreshed prices.
   Future<List<OptionsContract>> tickPositions(List<OptionsContract> contracts) async {
-    if (!_canAttemptLive() || !_isMarketHours()) {
+    if (!_shouldAttemptLive()) {
+      _liveLog('tick -> simulator (${_liveSkipReason()})');
       return _sim.tick();
     }
     // For a live tick we re-fetch the spot and re-price using BS greeks
@@ -152,8 +173,9 @@ class SpxOptionsService {
       }).toList();
       _markLiveSuccess();
       return updated;
-    } catch (_) {
-      _handleLiveError();
+    } catch (e) {
+      _liveLog('tick live request failed: $e');
+      _handleLiveError(error: e);
       return _sim.tick();
     }
   }
@@ -256,15 +278,23 @@ class SpxOptionsService {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  void _handleLiveError() {
+  void _handleLiveError({Object? error}) {
     _liveFailureCount++;
     final backoffSeconds = _liveFailureCount <= 1
         ? 10
         : (_liveFailureCount <= 3 ? 30 : 120);
     _liveRetryAt = DateTime.now().add(Duration(seconds: backoffSeconds));
+    _liveLog(
+      'live backoff failures=$_liveFailureCount '
+      'retryAt=${_liveRetryAt!.toIso8601String()} '
+      'error=${error ?? 'unknown'}',
+    );
   }
 
   void _markLiveSuccess() {
+    if (_liveFailureCount > 0 || _liveRetryAt != null) {
+      _liveLog('live recovered');
+    }
     _liveFailureCount = 0;
     _liveRetryAt = null;
   }
@@ -273,6 +303,27 @@ class SpxOptionsService {
     if (!_useLiveData) return false;
     if (_liveRetryAt == null) return true;
     return DateTime.now().isAfter(_liveRetryAt!);
+  }
+
+  bool _shouldAttemptLive() {
+    if (!_canAttemptLive()) return false;
+    if (_enforceMarketHours && !_isMarketHours()) return false;
+    return true;
+  }
+
+  String _liveSkipReason() {
+    if (!_useLiveData) return 'no token';
+    if (_liveRetryAt != null && DateTime.now().isBefore(_liveRetryAt!)) {
+      final remaining = _liveRetryAt!.difference(DateTime.now()).inSeconds;
+      return 'backoff ${remaining}s';
+    }
+    if (_enforceMarketHours && !_isMarketHours()) return 'outside market hours';
+    return 'live disabled';
+  }
+
+  void _liveLog(String message) {
+    if (!kDebugMode) return;
+    debugPrint('[SPX-LIVE] $message');
   }
 
   List<String> _simulatedExpirations() {

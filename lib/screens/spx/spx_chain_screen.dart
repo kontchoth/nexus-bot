@@ -19,7 +19,7 @@ class SpxChainScreen extends StatelessWidget {
             _SpotGexBar(state: state),
             Expanded(
               child: state.filteredChain.isEmpty
-                  ? const _EmptyChain()
+                  ? _EmptyChain(state: state)
                   : _ChainList(state: state),
             ),
           ],
@@ -495,17 +495,24 @@ class _BuyButton extends StatelessWidget {
 }
 
 class _EmptyChain extends StatelessWidget {
-  const _EmptyChain();
+  final SpxState state;
+  const _EmptyChain({required this.state});
 
   @override
   Widget build(BuildContext context) {
+    final hasTermMatches = state.termExpirations.isNotEmpty;
+    final message = !hasTermMatches
+        ? (state.termFilter.mode == SpxTermMode.exact
+            ? 'No contracts for ${state.termFilter.exactDte}DTE right now'
+            : 'No contracts in ${state.termFilter.minDte}-${state.termFilter.maxDte}DTE')
+        : 'Loading options chain…';
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.show_chart, size: 40, color: AppTheme.textDim),
           const SizedBox(height: 12),
-          Text('Loading options chain…',
+          Text(message,
               style: GoogleFonts.spaceGrotesk(
                   fontSize: 13, color: AppTheme.textDim)),
         ],

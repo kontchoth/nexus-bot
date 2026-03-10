@@ -119,10 +119,11 @@ class SpxOptionsSimulator {
       // Re-price using delta approximation: ΔP ≈ delta × ΔS
       final spotDelta = _spot - c.greeks.delta * c.strike; // rough re-centre
       final _ = spotDelta; // suppress lint — we use SpxGreeksCalculator below
+      final remainingDte = c.expiry.difference(now).inDays.clamp(0, 365);
       final newPrice = SpxGreeksCalculator.calcPrice(
         spot: _spot,
         strike: c.strike,
-        daysToExpiry: c.daysToExpiry,
+        daysToExpiry: remainingDte,
         iv: c.impliedVolatility,
         side: c.side,
       );
@@ -131,7 +132,7 @@ class SpxOptionsSimulator {
       final newGreeks = SpxGreeksCalculator.calcGreeks(
         spot: _spot,
         strike: c.strike,
-        daysToExpiry: c.daysToExpiry,
+        daysToExpiry: remainingDte,
         iv: c.impliedVolatility,
         side: c.side,
       );
@@ -141,6 +142,7 @@ class SpxOptionsSimulator {
         ask:         _ask(newPrice),
         lastPrice:   newPrice,
         greeks:      newGreeks,
+        daysToExpiry: remainingDte,
         lastUpdated: now,
       );
     }).toList();
@@ -205,14 +207,23 @@ class SpxOptionsSimulator {
     double price,
   ) {
     var score = 0;
-    if (ivRank < 35)               score += 2; // cheap IV favors long premium
-    else if (ivRank > 75)          score -= 1; // expensive IV penalizes longs
+    if (ivRank < 35) {
+      score += 2; // cheap IV favors long premium
+    } else if (ivRank > 75) {
+      score -= 1; // expensive IV penalizes longs
+    }
     if (greeks.delta.abs() >= 0.20 &&
-        greeks.delta.abs() <= 0.45) { score += 1; } // target delta zone
-    if (volume > oi * 0.05)        score += 1; // active volume
-    if (price > 0.50)              score += 1; // liquid, not penny options
+        greeks.delta.abs() <= 0.45) {
+      score += 1; // target delta zone
+    }
+    if (volume > oi * 0.05) {
+      score += 1; // active volume
+    }
+    if (price > 0.50) {
+      score += 1; // liquid, not penny options
+    }
 
-    if (score >= _signalBuyThreshold)  return SpxSignalType.buy;
+    if (score >= _signalBuyThreshold) return SpxSignalType.buy;
     if (score <= _signalSellThreshold) return SpxSignalType.sell;
     return SpxSignalType.watch;
   }

@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nexusbot/firebase_options.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'blocs/auth_bloc.dart';
@@ -17,13 +18,20 @@ import 'screens/crypto/dashboard_screen.dart';
 import 'screens/spx/spx_chain_screen.dart';
 import 'screens/spx/spx_positions_screen.dart';
 import 'screens/spx/spx_dashboard_screen.dart';
+import 'screens/spx/spx_journal_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/auth_repository.dart';
 import 'services/app_settings_repository.dart';
 import 'services/wallet_repository.dart';
 import 'services/firebase_auth_repository.dart';
+import 'services/spx/spx_trade_journal_repository.dart';
 import 'theme/app_theme.dart';
+
+const _secureStorage = FlutterSecureStorage(
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
+const _tradierTokenKey = 'tradier_api_token';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -130,13 +138,42 @@ class _AuthenticatedShell extends StatefulWidget {
 class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   late final CryptoBloc _cryptoBloc;
   late final SpxBloc _spxBloc;
+  late final SpxTradeJournalRepository _spxJournalRepository;
 
   @override
   void initState() {
     super.initState();
     _cryptoBloc = CryptoBloc()..add(InitializeMarket());
-    _spxBloc    = SpxBloc()..add(const InitializeSpx());
+    _spxJournalRepository = Firebase.apps.isNotEmpty
+        ? FirebaseSpxTradeJournalRepository()
+        : LocalSpxTradeJournalRepository();
+    if (kDebugMode) {
+      debugPrint(
+        '[SPX-JOURNAL] Repository: ${_spxJournalRepository.runtimeType}',
+      );
+    }
+    _spxBloc = SpxBloc(
+      userId: widget.user.id,
+      journalRepository: _spxJournalRepository,
+    )..add(const InitializeSpx());
+    _applySavedTradierToken();
     _loadAlertPreferences();
+  }
+
+  Future<void> _applySavedTradierToken() async {
+    final token = (await _secureStorage.read(key: _tradierTokenKey) ?? '').trim();
+    if (token.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[SPX-LIVE] No saved Tradier token found in secure storage');
+      }
+      return;
+    }
+    if (kDebugMode) {
+      debugPrint('[SPX-LIVE] Loaded saved Tradier token (length=${token.length})');
+    }
+    try {
+      _spxBloc.add(UpdateTradierToken(token));
+    } catch (_) {}
   }
 
   Future<void> _loadAlertPreferences() async {
@@ -171,12 +208,19 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
 
   @override
   Widget build(BuildContext context) {
-    return MultiBlocProvider(
+    return MultiRepositoryProvider(
       providers: [
-        BlocProvider<CryptoBloc>.value(value: _cryptoBloc),
-        BlocProvider<SpxBloc>.value(value: _spxBloc),
+        RepositoryProvider<SpxTradeJournalRepository>.value(
+          value: _spxJournalRepository,
+        ),
       ],
-      child: const HomeShell(),
+      child: MultiBlocProvider(
+        providers: [
+          BlocProvider<CryptoBloc>.value(value: _cryptoBloc),
+          BlocProvider<SpxBloc>.value(value: _spxBloc),
+        ],
+        child: const HomeShell(),
+      ),
     );
   }
 }
@@ -211,7 +255,7 @@ class _HomeShellState extends State<HomeShell> {
     SpxChainScreen(),
     SpxPositionsScreen(),
     SpxDashboardScreen(),
-    LogScreen(),
+    SpxJournalScreen(),
     SettingsScreen(),
   ];
 
