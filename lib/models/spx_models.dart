@@ -309,3 +309,117 @@ class SpxSignal extends Equatable {
   @override
   List<Object?> get props => [contract.symbol, confidenceScore];
 }
+
+// ── Intraday Strategy Models ─────────────────────────────────────────────────
+
+enum SpxDirection { up, down, neutral }
+
+enum SpxStrategyActionType { goLong, goShort, wait }
+
+extension SpxDirectionExt on SpxDirection {
+  String get label {
+    switch (this) {
+      case SpxDirection.up:
+        return 'Up';
+      case SpxDirection.down:
+        return 'Down';
+      case SpxDirection.neutral:
+        return 'Neutral';
+    }
+  }
+}
+
+extension SpxStrategyActionTypeExt on SpxStrategyActionType {
+  String get label {
+    switch (this) {
+      case SpxStrategyActionType.goLong:
+        return 'GO LONG';
+      case SpxStrategyActionType.goShort:
+        return 'GO SHORT';
+      case SpxStrategyActionType.wait:
+        return 'WAIT / REASSESS';
+    }
+  }
+}
+
+class SpxStrategySignal extends Equatable {
+  final String key;
+  final String label;
+  final SpxDirection direction;
+  final String detail;
+
+  const SpxStrategySignal({
+    required this.key,
+    required this.label,
+    required this.direction,
+    required this.detail,
+  });
+
+  @override
+  List<Object?> get props => [key, label, direction, detail];
+}
+
+class SpxStrategySnapshot extends Equatable {
+  final SpxStrategyActionType action;
+  final String reason;
+  final bool significantGap;
+  final double gapPercent;
+  final int minutesFromSessionStart;
+  final double? minute14High;
+  final double? minute14Low;
+  final SpxDirection dominantDirection;
+  final SpxDirection dplDirection;
+  final List<SpxStrategySignal> signals;
+  final DateTime updatedAt;
+
+  const SpxStrategySnapshot({
+    required this.action,
+    required this.reason,
+    required this.significantGap,
+    required this.gapPercent,
+    required this.minutesFromSessionStart,
+    required this.minute14High,
+    required this.minute14Low,
+    required this.dominantDirection,
+    required this.dplDirection,
+    required this.signals,
+    required this.updatedAt,
+  });
+
+  int get upSignals =>
+      signals.where((s) => s.direction == SpxDirection.up).length;
+
+  int get downSignals =>
+      signals.where((s) => s.direction == SpxDirection.down).length;
+
+  int get neutralSignals =>
+      signals.where((s) => s.direction == SpxDirection.neutral).length;
+
+  bool get allSignalsAligned =>
+      (upSignals == signals.length) || (downSignals == signals.length);
+
+  double? get longOtmStrike {
+    if (minute14Low == null) return null;
+    return minute14Low! + 50;
+  }
+
+  double? get shortOtmStrike {
+    if (minute14High == null) return null;
+    return minute14High! - 50;
+  }
+
+  @override
+  List<Object?> get props => [
+        action,
+        reason,
+        significantGap,
+        gapPercent,
+        minutesFromSessionStart,
+        minute14High,
+        minute14Low,
+        dominantDirection,
+        dplDirection,
+        signals,
+        updatedAt,
+      ];
+}

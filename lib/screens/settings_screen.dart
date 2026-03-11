@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -9,12 +11,14 @@ import 'wallet_screen.dart';
 import '../models/crypto_models.dart';
 import '../services/auth_repository.dart';
 import '../services/app_settings_repository.dart';
+import '../services/remote_push_service.dart';
 import '../theme/app_theme.dart';
 
 const _storage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
 const _tradierTokenKey = 'tradier_api_token';
+const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -34,10 +38,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _tokenController = TextEditingController();
   bool _tokenObscured = true;
   bool _tokenSaving = false;
+  final _robinhoodTokenController = TextEditingController();
+  bool _robinhoodTokenObscured = true;
+  bool _robinhoodTokenSaving = false;
+  CryptoDataProvider _cryptoDataProvider = CryptoDataProvider.binance;
   SpxTermMode _spxTermMode = SpxTermMode.exact;
   int _spxExactDte = 7;
   int _spxMinDte = 5;
   int _spxMaxDte = 14;
+  String _spxExecutionMode = SpxOpportunityExecutionMode.manualConfirm;
+  int _spxEntryDelaySeconds = 30;
+  int _spxValidationWindowSeconds = 120;
+  double _spxMaxSlippagePct = 5.0;
 
   @override
   void initState() {
@@ -49,6 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     _loadPrefs();
     _loadToken();
+    _loadRobinhoodToken();
   }
 
   Future<void> _loadToken() async {
@@ -91,9 +104,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _loadRobinhoodToken() async {
+    final token = await _storage.read(key: _robinhoodTokenKey);
+    if (!mounted) return;
+    final normalized = (token ?? '').trim();
+    setState(() => _robinhoodTokenController.text = normalized);
+    try {
+      context.read<CryptoBloc>().add(UpdateRobinhoodToken(normalized));
+    } catch (_) {}
+  }
+
+  Future<void> _saveRobinhoodToken() async {
+    final token = _robinhoodTokenController.text.trim();
+    setState(() => _robinhoodTokenSaving = true);
+    try {
+      if (token.isEmpty) {
+        await _storage.delete(key: _robinhoodTokenKey);
+      } else {
+        await _storage.write(key: _robinhoodTokenKey, value: token);
+      }
+      if (!mounted) return;
+      try {
+        context.read<CryptoBloc>().add(UpdateRobinhoodToken(token));
+      } catch (_) {}
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            token.isEmpty ? 'Robinhood token cleared' : 'Robinhood token saved',
+          ),
+          backgroundColor: AppTheme.blue.withValues(alpha: 0.9),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _robinhoodTokenSaving = false);
+    }
+  }
+
   @override
   void dispose() {
     _tokenController.dispose();
+    _robinhoodTokenController.dispose();
     super.dispose();
   }
 
@@ -110,13 +162,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _alertsEnabled = settings.alertsEnabled;
       _hapticsEnabled = settings.hapticsEnabled;
-      _spxTermMode =
-          settings.spxTermMode == 'range' ? SpxTermMode.range : SpxTermMode.exact;
+      _cryptoDataProvider = settings.cryptoDataProvider == 'robinhood'
+          ? CryptoDataProvider.robinhood
+          : CryptoDataProvider.binance;
+      _spxTermMode = settings.spxTermMode == 'range'
+          ? SpxTermMode.range
+          : SpxTermMode.exact;
       _spxExactDte = settings.spxExactDte;
       _spxMinDte = settings.spxMinDte;
       _spxMaxDte = settings.spxMaxDte < settings.spxMinDte
           ? settings.spxMinDte
           : settings.spxMaxDte;
+      _spxExecutionMode = SpxOpportunityExecutionMode.normalize(
+        settings.spxOpportunityExecutionMode,
+      );
+      _spxEntryDelaySeconds =
+          settings.spxEntryDelaySeconds.clamp(0, 3600).toInt();
+      _spxValidationWindowSeconds =
+          settings.spxValidationWindowSeconds.clamp(15, 3600).toInt();
+      _spxMaxSlippagePct =
+          settings.spxMaxSlippagePct.clamp(0.1, 100.0).toDouble();
       _loadingPrefs = false;
     });
     _tradingBloc?.add(
@@ -125,6 +190,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         hapticsEnabled: _hapticsEnabled,
       ),
     );
+    _tradingBloc?.add(UpdateCryptoDataProvider(_cryptoDataProvider));
+    _pushSpxExecutionSettings();
   }
 
   Future<void> _persistPrefs() async {
@@ -135,12 +202,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
           AppPreferences(
             alertsEnabled: _alertsEnabled,
             hapticsEnabled: _hapticsEnabled,
+            cryptoDataProvider:
+                _cryptoDataProvider == CryptoDataProvider.robinhood
+                    ? 'robinhood'
+                    : 'binance',
             spxTermMode: _spxTermMode == SpxTermMode.range ? 'range' : 'exact',
             spxExactDte: _spxExactDte,
             spxMinDte: _spxMinDte,
             spxMaxDte: _spxMaxDte,
+            spxOpportunityExecutionMode: _spxExecutionMode,
+            spxEntryDelaySeconds: _spxEntryDelaySeconds,
+            spxValidationWindowSeconds: _spxValidationWindowSeconds,
+            spxMaxSlippagePct: _spxMaxSlippagePct,
           ),
         );
+  }
+
+  void _setCryptoProvider(CryptoDataProvider provider) {
+    setState(() => _cryptoDataProvider = provider);
+    try {
+      context.read<CryptoBloc>().add(UpdateCryptoDataProvider(provider));
+    } catch (_) {}
+    _persistPrefs();
   }
 
   void _pushSpxTermFilter() {
@@ -159,15 +242,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _setExactDte(int value) {
-    final next = value.clamp(0, 365);
+    final next = value.clamp(0, 365).toInt();
     setState(() => _spxExactDte = next);
     _pushSpxTermFilter();
     _persistPrefs();
   }
 
   void _setRange({int? minDte, int? maxDte}) {
-    var nextMin = (minDte ?? _spxMinDte).clamp(0, 365);
-    var nextMax = (maxDte ?? _spxMaxDte).clamp(0, 365);
+    var nextMin = (minDte ?? _spxMinDte).clamp(0, 365).toInt();
+    var nextMax = (maxDte ?? _spxMaxDte).clamp(0, 365).toInt();
     if (nextMax < nextMin) nextMax = nextMin;
     setState(() {
       _spxMinDte = nextMin;
@@ -175,6 +258,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     _pushSpxTermFilter();
     _persistPrefs();
+  }
+
+  void _setSpxExecutionMode(String mode) {
+    setState(
+        () => _spxExecutionMode = SpxOpportunityExecutionMode.normalize(mode));
+    _pushSpxExecutionSettings();
+    _persistPrefs();
+  }
+
+  void _setSpxEntryDelaySeconds(int seconds) {
+    final next = seconds.clamp(0, 3600).toInt();
+    setState(() => _spxEntryDelaySeconds = next);
+    _pushSpxExecutionSettings();
+    _persistPrefs();
+  }
+
+  void _setSpxValidationWindowSeconds(int seconds) {
+    final next = seconds.clamp(15, 3600).toInt();
+    setState(() => _spxValidationWindowSeconds = next);
+    _pushSpxExecutionSettings();
+    _persistPrefs();
+  }
+
+  void _setSpxMaxSlippagePct(double value, {bool persist = true}) {
+    final next = value.clamp(0.1, 100.0).toDouble();
+    setState(() => _spxMaxSlippagePct = next);
+    _pushSpxExecutionSettings();
+    if (persist) _persistPrefs();
+  }
+
+  void _pushSpxExecutionSettings() {
+    try {
+      context.read<SpxBloc>().add(
+            UpdateSpxExecutionSettings(
+              executionMode: _spxExecutionMode,
+              entryDelaySeconds: _spxEntryDelaySeconds,
+              validationWindowSeconds: _spxValidationWindowSeconds,
+              maxSlippagePct: _spxMaxSlippagePct,
+              notificationsEnabled: _alertsEnabled,
+            ),
+          );
+    } catch (_) {}
   }
 
   Future<void> _enableMfa() async {
@@ -476,8 +601,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ? const SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2),
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Icon(Icons.save_outlined, size: 16),
                           label: Text(_tokenSaving ? 'Saving…' : 'Save token'),
@@ -521,6 +646,124 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
+                          _SelectCard<CryptoDataProvider>(
+                            label: 'Data Source',
+                            value: _cryptoDataProvider,
+                            items: CryptoDataProvider.values,
+                            itemLabel: (p) => p.label,
+                            onChanged: (p) {
+                              if (p == null) return;
+                              _setCryptoProvider(p);
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          if (_cryptoDataProvider ==
+                              CryptoDataProvider.robinhood)
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: AppTheme.bg3,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppTheme.border2),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Robinhood Crypto Token',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: AppTheme.textMuted,
+                                      fontSize: 10,
+                                      letterSpacing: 0.8,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _robinhoodTokenController,
+                                    obscureText: _robinhoodTokenObscured,
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: AppTheme.textPrimary,
+                                      fontSize: 12,
+                                    ),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      hintText: 'paste robinhood token…',
+                                      hintStyle: GoogleFonts.spaceGrotesk(
+                                        color: AppTheme.textDim,
+                                        fontSize: 11,
+                                      ),
+                                      filled: true,
+                                      fillColor: AppTheme.bg2,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(
+                                          color: AppTheme.border2,
+                                        ),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(
+                                          color: AppTheme.border2,
+                                        ),
+                                      ),
+                                      suffixIcon: IconButton(
+                                        icon: Icon(
+                                          _robinhoodTokenObscured
+                                              ? Icons.visibility_outlined
+                                              : Icons.visibility_off_outlined,
+                                          size: 18,
+                                          color: AppTheme.textMuted,
+                                        ),
+                                        onPressed: () => setState(
+                                          () => _robinhoodTokenObscured =
+                                              !_robinhoodTokenObscured,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _robinhoodTokenSaving
+                                          ? null
+                                          : _saveRobinhoodToken,
+                                      icon: _robinhoodTokenSaving
+                                          ? const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.save_outlined,
+                                              size: 16,
+                                            ),
+                                      label: Text(
+                                        _robinhoodTokenSaving
+                                            ? 'Saving…'
+                                            : 'Save Robinhood token',
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Default remains Binance unless you switch Data Source to Robinhood.',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: AppTheme.textDim,
+                                      fontSize: 10,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_cryptoDataProvider ==
+                              CryptoDataProvider.robinhood)
+                            const SizedBox(height: 10),
                           Row(
                             children: [
                               Expanded(
@@ -617,8 +860,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 value: _spxMinDte,
                                 onMinus: () =>
                                     _setRange(minDte: _spxMinDte - 1),
-                                onPlus: () =>
-                                    _setRange(minDte: _spxMinDte + 1),
+                                onPlus: () => _setRange(minDte: _spxMinDte + 1),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -628,12 +870,106 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 value: _spxMaxDte,
                                 onMinus: () =>
                                     _setRange(maxDte: _spxMaxDte - 1),
-                                onPlus: () =>
-                                    _setRange(maxDte: _spxMaxDte + 1),
+                                onPlus: () => _setRange(maxDte: _spxMaxDte + 1),
                               ),
                             ),
                           ],
                         ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _SectionCard(
+                  title: 'SPX Entry Controls',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Choose whether entries require approval, execute after a delay, or execute immediately.',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment<String>(
+                            value: SpxOpportunityExecutionMode.manualConfirm,
+                            label: Text('Manual Confirm'),
+                          ),
+                          ButtonSegment<String>(
+                            value: SpxOpportunityExecutionMode.autoAfterDelay,
+                            label: Text('Auto + Delay'),
+                          ),
+                          ButtonSegment<String>(
+                            value: SpxOpportunityExecutionMode.autoImmediate,
+                            label: Text('Auto Now'),
+                          ),
+                        ],
+                        selected: {_spxExecutionMode},
+                        onSelectionChanged: (selection) {
+                          _setSpxExecutionMode(selection.first);
+                        },
+                        style: ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                          textStyle: WidgetStatePropertyAll(
+                            GoogleFonts.spaceGrotesk(fontSize: 11),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (_spxExecutionMode ==
+                          SpxOpportunityExecutionMode.autoAfterDelay)
+                        _DteStepper(
+                          label: 'Entry Delay (sec)',
+                          value: _spxEntryDelaySeconds,
+                          onMinus: () => _setSpxEntryDelaySeconds(
+                              _spxEntryDelaySeconds - 5),
+                          onPlus: () => _setSpxEntryDelaySeconds(
+                              _spxEntryDelaySeconds + 5),
+                        ),
+                      if (_spxExecutionMode ==
+                          SpxOpportunityExecutionMode.manualConfirm)
+                        _DteStepper(
+                          label: 'Validation Window (sec)',
+                          value: _spxValidationWindowSeconds,
+                          onMinus: () => _setSpxValidationWindowSeconds(
+                            _spxValidationWindowSeconds - 5,
+                          ),
+                          onPlus: () => _setSpxValidationWindowSeconds(
+                            _spxValidationWindowSeconds + 5,
+                          ),
+                        ),
+                      if (_spxExecutionMode ==
+                          SpxOpportunityExecutionMode.autoImmediate)
+                        Text(
+                          'Auto Now mode executes immediately after guard checks.',
+                          style: GoogleFonts.spaceGrotesk(
+                            color: AppTheme.textDim,
+                            fontSize: 10,
+                          ),
+                        ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Max allowed slippage: ${_spxMaxSlippagePct.toStringAsFixed(1)}%',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Slider(
+                        value: _spxMaxSlippagePct,
+                        min: 0.1,
+                        max: 25.0,
+                        divisions: 249,
+                        label: '${_spxMaxSlippagePct.toStringAsFixed(1)}%',
+                        onChanged: (value) =>
+                            _setSpxMaxSlippagePct(value, persist: false),
+                        onChangeEnd: _setSpxMaxSlippagePct,
+                      ),
                     ],
                   ),
                 ),
@@ -650,6 +986,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             UpdateAlertPreferences(
                               alertsEnabled: _alertsEnabled,
                               hapticsEnabled: _hapticsEnabled,
+                            ),
+                          );
+                          _pushSpxExecutionSettings();
+                          unawaited(
+                            RemotePushService.instance.updateAlertsPreference(
+                              alertsEnabled: _alertsEnabled,
                             ),
                           );
                           _persistPrefs();

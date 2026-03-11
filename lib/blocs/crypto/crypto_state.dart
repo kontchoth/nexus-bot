@@ -7,6 +7,7 @@ class CryptoState extends Equatable {
   final DailyStats stats;
   final BotStatus botStatus;
   final Exchange selectedExchange;
+  final CryptoDataProvider marketProvider;
   final Timeframe selectedTimeframe;
   final MarketDataMode marketDataMode;
   final bool alertsEnabled;
@@ -20,6 +21,7 @@ class CryptoState extends Equatable {
     required this.stats,
     required this.botStatus,
     required this.selectedExchange,
+    required this.marketProvider,
     required this.selectedTimeframe,
     required this.marketDataMode,
     required this.alertsEnabled,
@@ -34,6 +36,7 @@ class CryptoState extends Equatable {
         stats: DailyStats(),
         botStatus: BotStatus.paused,
         selectedExchange: Exchange.all,
+        marketProvider: CryptoDataProvider.binance,
         selectedTimeframe: Timeframe.m15,
         marketDataMode: MarketDataMode.simulator,
         alertsEnabled: true,
@@ -67,6 +70,7 @@ class CryptoState extends Equatable {
     DailyStats? stats,
     BotStatus? botStatus,
     Exchange? selectedExchange,
+    CryptoDataProvider? marketProvider,
     Timeframe? selectedTimeframe,
     MarketDataMode? marketDataMode,
     bool? alertsEnabled,
@@ -81,6 +85,7 @@ class CryptoState extends Equatable {
       stats: stats ?? this.stats,
       botStatus: botStatus ?? this.botStatus,
       selectedExchange: selectedExchange ?? this.selectedExchange,
+      marketProvider: marketProvider ?? this.marketProvider,
       selectedTimeframe: selectedTimeframe ?? this.selectedTimeframe,
       marketDataMode: marketDataMode ?? this.marketDataMode,
       alertsEnabled: alertsEnabled ?? this.alertsEnabled,
@@ -98,6 +103,7 @@ class CryptoState extends Equatable {
         stats,
         botStatus,
         selectedExchange,
+        marketProvider,
         selectedTimeframe,
         marketDataMode,
         alertsEnabled,

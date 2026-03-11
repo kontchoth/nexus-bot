@@ -161,6 +161,8 @@ class _SpotGexBar extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          _MarketChip(isOpen: state.isMarketOpen),
+          const SizedBox(width: 6),
           _ModeChip(mode: state.dataMode),
         ],
       ),
@@ -215,6 +217,36 @@ class _ModeChip extends StatelessWidget {
           fontSize: 9,
           fontWeight: FontWeight.w700,
           color: isLive ? AppTheme.green : AppTheme.textMuted,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketChip extends StatelessWidget {
+  final bool isOpen;
+  const _MarketChip({required this.isOpen});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: isOpen ? AppTheme.greenBg : AppTheme.redBg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: isOpen
+              ? AppTheme.green.withValues(alpha: 0.45)
+              : AppTheme.red.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Text(
+        isOpen ? 'MKT OPEN' : 'MKT CLOSED',
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          color: isOpen ? AppTheme.green : AppTheme.red,
           letterSpacing: 0.5,
         ),
       ),

@@ -66,3 +66,19 @@ class UpdateAlertPreferences extends CryptoEvent {
   @override
   List<Object?> get props => [alertsEnabled, hapticsEnabled];
 }
+
+class UpdateCryptoDataProvider extends CryptoEvent {
+  final CryptoDataProvider provider;
+  const UpdateCryptoDataProvider(this.provider);
+
+  @override
+  List<Object?> get props => [provider];
+}
+
+class UpdateRobinhoodToken extends CryptoEvent {
+  final String token;
+  const UpdateRobinhoodToken(this.token);
+
+  @override
+  List<Object?> get props => [token];
+}

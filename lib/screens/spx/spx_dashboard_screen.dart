@@ -22,6 +22,8 @@ class SpxDashboardScreen extends StatelessWidget {
             const SizedBox(height: 12),
             _GexPanel(state: state),
             const SizedBox(height: 12),
+            _StrategyPanel(state: state),
+            const SizedBox(height: 12),
             _ScannerSignals(state: state),
             const SizedBox(height: 12),
             _ScannerToggle(state: state),
@@ -56,6 +58,8 @@ class _PnLSection extends StatelessWidget {
                   fontSize: 10,
                   color: AppTheme.textMuted,
                   letterSpacing: 1.5)),
+          const SizedBox(height: 8),
+          _DashboardMarketChip(isOpen: state.isMarketOpen),
           const SizedBox(height: 16),
           PnLArc(
             value: state.realizedPnL.clamp(0, double.infinity),
@@ -80,6 +84,36 @@ class _PnLSection extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _DashboardMarketChip extends StatelessWidget {
+  final bool isOpen;
+  const _DashboardMarketChip({required this.isOpen});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: isOpen ? AppTheme.greenBg : AppTheme.redBg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: isOpen
+              ? AppTheme.green.withValues(alpha: 0.45)
+              : AppTheme.red.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Text(
+        isOpen ? 'Market Open' : 'Market Closed',
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: isOpen ? AppTheme.green : AppTheme.red,
+          letterSpacing: 0.4,
+        ),
       ),
     );
   }
@@ -273,6 +307,252 @@ class _GexCell extends StatelessWidget {
   }
 }
 
+// ── Strategy panel ───────────────────────────────────────────────────────────
+
+class _StrategyPanel extends StatelessWidget {
+  final SpxState state;
+  const _StrategyPanel({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final strategy = state.strategySnapshot;
+    if (strategy == null) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.bg2,
+          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          'Building strategy signals…',
+          style: GoogleFonts.spaceGrotesk(fontSize: 12, color: AppTheme.textDim),
+        ),
+      );
+    }
+
+    final actionColor = switch (strategy.action) {
+      SpxStrategyActionType.goLong => AppTheme.green,
+      SpxStrategyActionType.goShort => AppTheme.red,
+      SpxStrategyActionType.wait => AppTheme.gold,
+    };
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.bg2,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                '🧭 DAILY STRATEGY',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 10,
+                  color: AppTheme.textMuted,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: actionColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: actionColor.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  strategy.action.label,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: actionColor,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _StrategyMiniChip(
+                label: 'Gap',
+                value: '${strategy.gapPercent.toStringAsFixed(2)}%',
+                color: strategy.significantGap ? AppTheme.gold : AppTheme.textMuted,
+              ),
+              _StrategyMiniChip(
+                label: 'S-Time',
+                value: '${strategy.minutesFromSessionStart}m',
+                color: AppTheme.blue,
+              ),
+              _StrategyMiniChip(
+                label: 'Min14 High',
+                value: strategy.minute14High == null
+                    ? '—'
+                    : strategy.minute14High!.toStringAsFixed(1),
+                color: AppTheme.red,
+              ),
+              _StrategyMiniChip(
+                label: 'Min14 Low',
+                value: strategy.minute14Low == null
+                    ? '—'
+                    : strategy.minute14Low!.toStringAsFixed(1),
+                color: AppTheme.green,
+              ),
+              _StrategyMiniChip(
+                label: 'DPL',
+                value: strategy.dplDirection.label,
+                color: _directionColor(strategy.dplDirection),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            strategy.reason,
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 11,
+              color: AppTheme.textPrimary,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'All 7 Signals',
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 9,
+              color: AppTheme.textMuted,
+              letterSpacing: 1.0,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...strategy.signals.map((signal) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: _directionColor(signal.direction),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 110,
+                      child: Text(
+                        signal.label,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 10,
+                          color: AppTheme.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 52,
+                      child: Text(
+                        signal.direction.label,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 10,
+                          color: _directionColor(signal.direction),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        signal.detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 10,
+                          color: AppTheme.textDim,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              color: AppTheme.bg3,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Text(
+              strategy.action == SpxStrategyActionType.goLong
+                  ? 'Long plan: Enter near minute-14 low. ITM budget \$2k, OTM budget \$1k at strike (low + 50).'
+                  : strategy.action == SpxStrategyActionType.goShort
+                      ? 'Short plan: Enter near minute-14 high. ITM budget \$2k, OTM budget \$1k at strike (high - 50).'
+                      : 'Wait plan: Keep tracking DPL + signal alignment through the 35-minute confirmation window.',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 10,
+                color: AppTheme.textMuted,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _directionColor(SpxDirection direction) {
+    switch (direction) {
+      case SpxDirection.up:
+        return AppTheme.green;
+      case SpxDirection.down:
+        return AppTheme.red;
+      case SpxDirection.neutral:
+        return AppTheme.textMuted;
+    }
+  }
+}
+
+class _StrategyMiniChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _StrategyMiniChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.32)),
+      ),
+      child: Text(
+        '$label: $value',
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 9,
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
 // ── Scanner signals ───────────────────────────────────────────────────────────
 
 class _ScannerSignals extends StatelessWidget {
@@ -281,7 +561,13 @@ class _ScannerSignals extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final signals = state.buySignals.take(5).toList();
+    final action = state.strategySnapshot?.action;
+    final filtered = action == SpxStrategyActionType.goLong
+        ? state.buySignals.where((c) => c.side == OptionsSide.call)
+        : action == SpxStrategyActionType.goShort
+            ? state.buySignals.where((c) => c.side == OptionsSide.put)
+            : state.buySignals;
+    final signals = filtered.take(5).toList();
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.bg2,
@@ -303,7 +589,10 @@ class _ScannerSignals extends StatelessWidget {
           if (signals.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: Text('Scanning for options signals…',
+              child: Text(
+                  action == SpxStrategyActionType.wait
+                      ? 'Strategy is in WAIT mode — no entries yet.'
+                      : 'Scanning for options signals…',
                   style: GoogleFonts.spaceGrotesk(
                       fontSize: 12, color: AppTheme.textDim)),
             )
@@ -427,7 +716,7 @@ class _ScannerToggle extends StatelessWidget {
                   ),
                   Text(
                     isActive
-                        ? 'Automatically enters buy signals (max 6 positions)'
+                        ? 'Automatically enters strategy-aligned signals (max 6 positions)'
                         : 'Tap to enable automatic signal execution',
                     style: GoogleFonts.spaceGrotesk(
                         fontSize: 10, color: AppTheme.textDim),

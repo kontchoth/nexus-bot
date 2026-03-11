@@ -6,6 +6,7 @@ export 'common_models.dart';
 enum SignalType { buy, sell, watch }
 enum MACDTrend { bullish, bearish, neutral }
 enum Exchange { all, binance, coinbase, kraken, bybit }
+enum CryptoDataProvider { binance, robinhood }
 enum Timeframe { m1, m5, m15, h1, h4 }
 
 extension TimeframeExt on Timeframe {
@@ -28,6 +29,17 @@ extension ExchangeExt on Exchange {
       case Exchange.coinbase: return 'Coinbase';
       case Exchange.kraken:   return 'Kraken';
       case Exchange.bybit:    return 'Bybit';
+    }
+  }
+}
+
+extension CryptoDataProviderExt on CryptoDataProvider {
+  String get label {
+    switch (this) {
+      case CryptoDataProvider.binance:
+        return 'Binance (Default)';
+      case CryptoDataProvider.robinhood:
+        return 'Robinhood Crypto';
     }
   }
 }

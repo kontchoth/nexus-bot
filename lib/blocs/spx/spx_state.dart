@@ -80,6 +80,7 @@ class SpxState extends Equatable {
 
   /// Current SPX spot price.
   final double spotPrice;
+  final bool isMarketOpen;
 
   /// Most-recent GEX snapshot.
   final GexData? gexData;
@@ -90,6 +91,7 @@ class SpxState extends Equatable {
   /// Tradier API token (stored in-memory; persisted via flutter_secure_storage).
   final String? tradierToken;
   final SpxTermFilter termFilter;
+  final SpxStrategySnapshot? strategySnapshot;
 
   // ── Daily P&L ─────────────────────────────────────────────────────────────
   final double realizedPnL;
@@ -101,6 +103,7 @@ class SpxState extends Equatable {
     required this.positions,
     required this.expirations,
     required this.spotPrice,
+    required this.isMarketOpen,
     required this.logs,
     required this.scannerStatus,
     required this.dataMode,
@@ -108,6 +111,7 @@ class SpxState extends Equatable {
     this.selectedSymbol,
     this.gexData,
     this.tradierToken,
+    this.strategySnapshot,
     this.termFilter = const SpxTermFilter(
       mode: SpxTermMode.exact,
       exactDte: 7,
@@ -124,6 +128,7 @@ class SpxState extends Equatable {
         positions: [],
         expirations: [],
         spotPrice: 5750.0,
+        isMarketOpen: false,
         logs: [],
         scannerStatus: SpxScannerStatus.paused,
         dataMode: SpxDataMode.simulator,
@@ -204,9 +209,11 @@ class SpxState extends Equatable {
     SpxScannerStatus? scannerStatus,
     SpxDataMode? dataMode,
     double? spotPrice,
+    bool? isMarketOpen,
     GexData? gexData,
     List<TradeLog>? logs,
     String? tradierToken,
+    SpxStrategySnapshot? strategySnapshot,
     SpxTermFilter? termFilter,
     double? realizedPnL,
     int? totalTrades,
@@ -217,6 +224,7 @@ class SpxState extends Equatable {
       positions:           positions          ?? this.positions,
       expirations:         expirations        ?? this.expirations,
       spotPrice:           spotPrice          ?? this.spotPrice,
+      isMarketOpen:        isMarketOpen       ?? this.isMarketOpen,
       logs:                logs               ?? this.logs,
       scannerStatus:       scannerStatus      ?? this.scannerStatus,
       dataMode:            dataMode           ?? this.dataMode,
@@ -224,6 +232,7 @@ class SpxState extends Equatable {
       selectedSymbol:      clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
       gexData:             gexData            ?? this.gexData,
       tradierToken:        tradierToken       ?? this.tradierToken,
+      strategySnapshot:    strategySnapshot   ?? this.strategySnapshot,
       termFilter:          termFilter         ?? this.termFilter,
       realizedPnL:         realizedPnL        ?? this.realizedPnL,
       totalTrades:         totalTrades        ?? this.totalTrades,
@@ -241,9 +250,11 @@ class SpxState extends Equatable {
         scannerStatus,
         dataMode,
         spotPrice,
+        isMarketOpen,
         gexData,
         logs,
         tradierToken,
+        strategySnapshot,
         termFilter,
         realizedPnL,
         totalTrades,

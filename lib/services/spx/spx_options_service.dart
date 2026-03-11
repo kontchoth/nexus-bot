@@ -60,6 +60,7 @@ class SpxOptionsService {
   // ── Public API ───────────────────────────────────────────────────────────
 
   bool get isLive => _canAttemptLive() && (!_enforceMarketHours || _isMarketHours());
+  bool get isMarketOpenNow => _isMarketHours();
 
   /// SPX spot price.  Returns simulator value on failure.
   Future<double> fetchSpxSpot() async {

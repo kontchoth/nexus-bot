@@ -3,7 +3,9 @@ import 'package:equatable/equatable.dart';
 // ── Shared Enums ──────────────────────────────────────────────────────────────
 
 enum BotStatus { active, paused, error }
+
 enum MarketDataMode { live, simulator }
+
 enum TradeLogType { buy, sell, win, loss, warn, system, info }
 
 // ── Trade Log ─────────────────────────────────────────────────────────────────
@@ -73,8 +75,14 @@ class DailyStats extends Equatable {
   }
 
   @override
-  List<Object?> get props =>
-      [realizedPnL, unrealizedPnL, totalTrades, winTrades, capital, dailyTarget];
+  List<Object?> get props => [
+        realizedPnL,
+        unrealizedPnL,
+        totalTrades,
+        winTrades,
+        capital,
+        dailyTarget
+      ];
 }
 
 // ── Trade Alert ───────────────────────────────────────────────────────────────
@@ -83,10 +91,29 @@ class TradeAlert {
   final String title;
   final String message;
   final TradeLogType type;
+  final String? payload;
 
   const TradeAlert({
     required this.title,
     required this.message,
     required this.type,
+    this.payload,
   });
+}
+
+class TradeAlertPayloads {
+  static const spxOpportunities = 'spx_opportunities';
+  static const _spxOpportunityPrefix = 'spx_opportunity:';
+
+  static String forSpxOpportunity(String opportunityId) =>
+      '$_spxOpportunityPrefix$opportunityId';
+
+  static bool isSpxOpportunity(String payload) =>
+      payload.startsWith(_spxOpportunityPrefix);
+
+  static String? spxOpportunityIdFrom(String payload) {
+    if (!isSpxOpportunity(payload)) return null;
+    final raw = payload.substring(_spxOpportunityPrefix.length).trim();
+    return raw.isEmpty ? null : raw;
+  }
 }

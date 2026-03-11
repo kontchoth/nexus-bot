@@ -18,13 +18,16 @@ import 'screens/crypto/dashboard_screen.dart';
 import 'screens/spx/spx_chain_screen.dart';
 import 'screens/spx/spx_positions_screen.dart';
 import 'screens/spx/spx_dashboard_screen.dart';
-import 'screens/spx/spx_journal_screen.dart';
+import 'screens/spx/spx_activity_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/auth_repository.dart';
 import 'services/app_settings_repository.dart';
+import 'services/local_notification_service.dart';
+import 'services/remote_push_service.dart';
 import 'services/wallet_repository.dart';
 import 'services/firebase_auth_repository.dart';
+import 'services/spx/spx_opportunity_journal_repository.dart';
 import 'services/spx/spx_trade_journal_repository.dart';
 import 'theme/app_theme.dart';
 
@@ -32,6 +35,7 @@ const _secureStorage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
 const _tradierTokenKey = 'tradier_api_token';
+const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +64,11 @@ Future<void> main() async {
       statusBarIconBrightness: Brightness.light,
     ),
   );
+  try {
+    await LocalNotificationService.instance.initialize();
+  } catch (_) {
+    // Notifications are optional; keep app functional if init fails.
+  }
   runApp(NexusBotApp(
     authRepository: authRepository,
     settingsRepository: settingsRepository,
@@ -139,6 +148,7 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   late final CryptoBloc _cryptoBloc;
   late final SpxBloc _spxBloc;
   late final SpxTradeJournalRepository _spxJournalRepository;
+  late final SpxOpportunityJournalRepository _spxOpportunityRepository;
 
   @override
   void initState() {
@@ -147,21 +157,30 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
     _spxJournalRepository = Firebase.apps.isNotEmpty
         ? FirebaseSpxTradeJournalRepository()
         : LocalSpxTradeJournalRepository();
+    _spxOpportunityRepository = Firebase.apps.isNotEmpty
+        ? FirebaseSpxOpportunityJournalRepository()
+        : LocalSpxOpportunityJournalRepository();
     if (kDebugMode) {
       debugPrint(
         '[SPX-JOURNAL] Repository: ${_spxJournalRepository.runtimeType}',
+      );
+      debugPrint(
+        '[SPX-OPPORTUNITY] Repository: ${_spxOpportunityRepository.runtimeType}',
       );
     }
     _spxBloc = SpxBloc(
       userId: widget.user.id,
       journalRepository: _spxJournalRepository,
+      opportunityJournalRepository: _spxOpportunityRepository,
     )..add(const InitializeSpx());
     _applySavedTradierToken();
+    _applySavedRobinhoodToken();
     _loadAlertPreferences();
   }
 
   Future<void> _applySavedTradierToken() async {
-    final token = (await _secureStorage.read(key: _tradierTokenKey) ?? '').trim();
+    final token =
+        (await _secureStorage.read(key: _tradierTokenKey) ?? '').trim();
     if (token.isEmpty) {
       if (kDebugMode) {
         debugPrint('[SPX-LIVE] No saved Tradier token found in secure storage');
@@ -169,7 +188,8 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
       return;
     }
     if (kDebugMode) {
-      debugPrint('[SPX-LIVE] Loaded saved Tradier token (length=${token.length})');
+      debugPrint(
+          '[SPX-LIVE] Loaded saved Tradier token (length=${token.length})');
     }
     try {
       _spxBloc.add(UpdateTradierToken(token));
@@ -185,6 +205,10 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         alertsEnabled: settings.alertsEnabled,
         hapticsEnabled: settings.hapticsEnabled,
       ));
+      final cryptoProvider = settings.cryptoDataProvider == 'robinhood'
+          ? CryptoDataProvider.robinhood
+          : CryptoDataProvider.binance;
+      _cryptoBloc.add(UpdateCryptoDataProvider(cryptoProvider));
       final mode = settings.spxTermMode == 'range'
           ? SpxTermMode.range
           : SpxTermMode.exact;
@@ -194,13 +218,35 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         minDte: settings.spxMinDte,
         maxDte: settings.spxMaxDte,
       )));
+      _spxBloc.add(UpdateSpxExecutionSettings(
+        executionMode: settings.spxOpportunityExecutionMode,
+        entryDelaySeconds: settings.spxEntryDelaySeconds,
+        validationWindowSeconds: settings.spxValidationWindowSeconds,
+        maxSlippagePct: settings.spxMaxSlippagePct,
+        notificationsEnabled: settings.alertsEnabled,
+      ));
+      unawaited(
+        RemotePushService.instance.configure(
+          userId: widget.user.id,
+          alertsEnabled: settings.alertsEnabled,
+        ),
+      );
     } catch (_) {
       // BLoC may have closed before async completed.
     }
   }
 
+  Future<void> _applySavedRobinhoodToken() async {
+    final token =
+        (await _secureStorage.read(key: _robinhoodTokenKey) ?? '').trim();
+    try {
+      _cryptoBloc.add(UpdateRobinhoodToken(token));
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    unawaited(RemotePushService.instance.dispose());
     _cryptoBloc.close();
     _spxBloc.close();
     super.dispose();
@@ -212,6 +258,9 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
       providers: [
         RepositoryProvider<SpxTradeJournalRepository>.value(
           value: _spxJournalRepository,
+        ),
+        RepositoryProvider<SpxOpportunityJournalRepository>.value(
+          value: _spxOpportunityRepository,
         ),
       ],
       child: MultiBlocProvider(
@@ -234,75 +283,187 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   StreamSubscription<TradeAlert>? _cryptoAlertSub;
   StreamSubscription<TradeAlert>? _spxAlertSub;
+  StreamSubscription<String>? _notificationTapSub;
+  StreamSubscription<String>? _remoteOpenedPayloadSub;
+  StreamSubscription<RemotePushMessage>? _remoteForegroundSub;
 
   // 0 = Crypto, 1 = SPX
   int _activeModule = 0;
-  int _cryptoTab    = 0;
-  int _spxTab       = 0;
+  int _cryptoTab = 0;
+  int _spxTab = 0;
+  int _spxActivityResetToken = 0;
+  String? _spxOpportunityFocusId;
+  bool _isAppForeground = true;
 
-  static const _cryptoScreens = [
-    ScannerScreen(),
-    PositionsScreen(),
-    DashboardScreen(),
-    LogScreen(),
-    SettingsScreen(),
-  ];
+  List<Widget> get _cryptoScreens => const [
+        ScannerScreen(),
+        PositionsScreen(),
+        DashboardScreen(),
+        LogScreen(),
+        SettingsScreen(),
+      ];
 
-  static const _spxScreens = [
-    SpxChainScreen(),
-    SpxPositionsScreen(),
-    SpxDashboardScreen(),
-    SpxJournalScreen(),
-    SettingsScreen(),
-  ];
+  List<Widget> get _spxScreens => [
+        const SpxChainScreen(),
+        const SpxPositionsScreen(),
+        const SpxDashboardScreen(),
+        SpxActivityScreen(
+          key: ValueKey<int>(_spxActivityResetToken),
+          focusOpportunityId: _spxOpportunityFocusId,
+          focusRequestKey: _spxActivityResetToken,
+        ),
+        const SettingsScreen(),
+      ];
 
   @override
   void initState() {
     super.initState();
-    _cryptoAlertSub = context.read<CryptoBloc>().alertsStream.listen(_onAlert);
-    _spxAlertSub    = context.read<SpxBloc>().alertsStream.listen(_onAlert);
+    WidgetsBinding.instance.addObserver(this);
+    _cryptoAlertSub = context.read<CryptoBloc>().alertsStream.listen((alert) {
+      _onAlert(alert, fromSpx: false);
+    });
+    _spxAlertSub = context.read<SpxBloc>().alertsStream.listen((alert) {
+      _onAlert(alert, fromSpx: true);
+    });
+    _notificationTapSub = LocalNotificationService.instance.tapPayloadStream
+        .listen(_handleNotificationPayload);
+    _remoteOpenedPayloadSub = RemotePushService.instance.openedPayloadStream
+        .listen(_handleNotificationPayload);
+    _remoteForegroundSub = RemotePushService.instance.foregroundMessageStream
+        .listen(_onRemoteForegroundMessage);
+    final launchPayload = LocalNotificationService.instance.takeLaunchPayload();
+    if (launchPayload != null) {
+      _handleNotificationPayload(launchPayload);
+    }
   }
 
-  void _onAlert(TradeAlert alert) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppForeground = state == AppLifecycleState.resumed;
+  }
+
+  void _onAlert(TradeAlert alert, {required bool fromSpx}) {
     if (!mounted) return;
-    final haptics = context.read<CryptoBloc>().state.hapticsEnabled;
+    final cryptoPrefs = context.read<CryptoBloc>().state;
+    if (!cryptoPrefs.alertsEnabled) return;
+    final canDeepLink = fromSpx && _isOpportunityDeepLinkAlert(alert);
+    final canNotifyDevice = fromSpx && _isOpportunityAlert(alert);
+    if (canNotifyDevice && !_isAppForeground) {
+      unawaited(
+        LocalNotificationService.instance.showSpxOpportunityNotification(
+          title: alert.title,
+          body: alert.message,
+          payload: alert.payload ?? TradeAlertPayloads.spxOpportunities,
+        ),
+      );
+    }
+    final haptics = cryptoPrefs.hapticsEnabled;
     if (haptics) HapticFeedback.selectionClick();
     final color = switch (alert.type) {
-      TradeLogType.buy  => AppTheme.green,
-      TradeLogType.win  => AppTheme.green,
+      TradeLogType.buy => AppTheme.green,
+      TradeLogType.win => AppTheme.green,
       TradeLogType.loss => AppTheme.red,
       TradeLogType.sell => AppTheme.red,
-      _                 => AppTheme.blue,
+      _ => AppTheme.blue,
     };
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('${alert.title}: ${alert.message}'),
       backgroundColor: color.withValues(alpha: 0.95),
       behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 2),
+      action: canDeepLink
+          ? SnackBarAction(
+              label: 'Review',
+              textColor: Colors.white,
+              onPressed: () {
+                if (!mounted) return;
+                _openSpxOpportunitiesFromPayload(
+                  alert.payload ?? TradeAlertPayloads.spxOpportunities,
+                );
+              },
+            )
+          : null,
     ));
+  }
+
+  bool _isOpportunityDeepLinkAlert(TradeAlert alert) {
+    if (alert.payload != null &&
+        (alert.payload == TradeAlertPayloads.spxOpportunities ||
+            TradeAlertPayloads.isSpxOpportunity(alert.payload!))) {
+      return true;
+    }
+    final title = alert.title.toLowerCase();
+    return title.startsWith('spx opportunity found');
+  }
+
+  bool _isOpportunityAlert(TradeAlert alert) {
+    if (alert.payload != null &&
+        (alert.payload == TradeAlertPayloads.spxOpportunities ||
+            TradeAlertPayloads.isSpxOpportunity(alert.payload!))) {
+      return true;
+    }
+    final title = alert.title.toLowerCase();
+    return title.startsWith('spx opportunity');
+  }
+
+  void _onRemoteForegroundMessage(RemotePushMessage message) {
+    final payload = message.payload;
+    final fromSpx = payload != null &&
+        (payload == TradeAlertPayloads.spxOpportunities ||
+            TradeAlertPayloads.isSpxOpportunity(payload));
+    _onAlert(
+      TradeAlert(
+        title: message.title,
+        message: message.body,
+        type: TradeLogType.info,
+        payload: payload,
+      ),
+      fromSpx: fromSpx,
+    );
+  }
+
+  void _handleNotificationPayload(String payload) {
+    if (!mounted) return;
+    _openSpxOpportunitiesFromPayload(payload);
+  }
+
+  void _openSpxOpportunitiesFromPayload(String payload) {
+    if (!mounted) return;
+    final focusId = TradeAlertPayloads.spxOpportunityIdFrom(payload);
+    final isListPayload = payload == TradeAlertPayloads.spxOpportunities;
+    if (focusId == null && !isListPayload) return;
+    setState(() {
+      _activeModule = 1;
+      _spxTab = 3; // Activity tab
+      _spxOpportunityFocusId = focusId;
+      _spxActivityResetToken++;
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cryptoAlertSub?.cancel();
     _spxAlertSub?.cancel();
+    _notificationTapSub?.cancel();
+    _remoteOpenedPayloadSub?.cancel();
+    _remoteForegroundSub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isCrypto  = _activeModule == 0;
+    final isCrypto = _activeModule == 0;
     final activeTab = isCrypto ? _cryptoTab : _spxTab;
-    final screens   = isCrypto ? _cryptoScreens : _spxScreens;
+    final screens = isCrypto ? _cryptoScreens : _spxScreens;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: PreferredSize(
-        preferredSize:
-            Size.fromHeight(56 + MediaQuery.paddingOf(context).top),
+        preferredSize: Size.fromHeight(56 + MediaQuery.paddingOf(context).top),
         child: _NexusAppBar(
           activeModule: _activeModule,
           onModuleChanged: (m) => setState(() {
@@ -451,7 +612,9 @@ class _PillSegment extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
-          color: isActive ? AppTheme.blue.withValues(alpha: 0.18) : Colors.transparent,
+          color: isActive
+              ? AppTheme.blue.withValues(alpha: 0.18)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
@@ -477,8 +640,7 @@ class _CryptoControls extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<CryptoBloc, CryptoState>(
       buildWhen: (p, c) =>
-          p.botStatus != c.botStatus ||
-          p.marketDataMode != c.marketDataMode,
+          p.botStatus != c.botStatus || p.marketDataMode != c.marketDataMode,
       builder: (context, state) {
         final isActive = state.botStatus == BotStatus.active;
         return Row(
@@ -533,12 +695,9 @@ class _CryptoControls extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isActive
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
+                      isActive ? Icons.pause_rounded : Icons.play_arrow_rounded,
                       size: 14,
-                      color:
-                          isActive ? AppTheme.green : AppTheme.textMuted,
+                      color: isActive ? AppTheme.green : AppTheme.textMuted,
                     ),
                     if (!isNarrow) ...[
                       const SizedBox(width: 4),
@@ -547,9 +706,8 @@ class _CryptoControls extends StatelessWidget {
                         style: GoogleFonts.spaceGrotesk(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
-                            color: isActive
-                                ? AppTheme.green
-                                : AppTheme.textMuted),
+                            color:
+                                isActive ? AppTheme.green : AppTheme.textMuted),
                       ),
                     ],
                   ],
@@ -575,7 +733,7 @@ class _SpxControls extends StatelessWidget {
           p.scannerStatus != c.scannerStatus || p.dataMode != c.dataMode,
       builder: (context, state) {
         final isActive = state.scannerStatus == SpxScannerStatus.active;
-        final isLive   = state.dataMode == SpxDataMode.live;
+        final isLive = state.dataMode == SpxDataMode.live;
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -625,9 +783,7 @@ class _SpxControls extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isActive
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
+                      isActive ? Icons.pause_rounded : Icons.play_arrow_rounded,
                       size: 14,
                       color: isActive ? AppTheme.green : AppTheme.textMuted,
                     ),
@@ -638,9 +794,8 @@ class _SpxControls extends StatelessWidget {
                         style: GoogleFonts.spaceGrotesk(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
-                            color: isActive
-                                ? AppTheme.green
-                                : AppTheme.textMuted),
+                            color:
+                                isActive ? AppTheme.green : AppTheme.textMuted),
                       ),
                     ],
                   ],
@@ -707,15 +862,13 @@ class _NexusNavBar extends StatelessWidget {
                     children: [
                       Icon(icon,
                           size: 20,
-                          color:
-                              isActive ? AppTheme.blue : AppTheme.textMuted),
+                          color: isActive ? AppTheme.blue : AppTheme.textMuted),
                       const SizedBox(height: 2),
                       Text(label,
                           style: GoogleFonts.spaceGrotesk(
                               fontSize: 9,
-                              color: isActive
-                                  ? AppTheme.blue
-                                  : AppTheme.textMuted,
+                              color:
+                                  isActive ? AppTheme.blue : AppTheme.textMuted,
                               fontWeight: isActive
                                   ? FontWeight.w700
                                   : FontWeight.w400)),

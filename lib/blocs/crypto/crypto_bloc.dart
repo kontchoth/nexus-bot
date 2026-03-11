@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../models/crypto_models.dart';
 import '../../services/crypto/live_market_service.dart';
 import '../../services/crypto/market_simulator.dart';
+import '../../services/crypto/robinhood_market_service.dart';
 
 part 'crypto_event.dart';
 part 'crypto_state.dart';
@@ -14,11 +15,14 @@ const _uuid = Uuid();
 class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
   Timer? _marketTimer;
   int _tickCount = 0;
-  final LiveMarketService _liveMarketService = LiveMarketService();
+  final LiveMarketService _binanceMarketService = LiveMarketService();
+  final RobinhoodMarketService _robinhoodMarketService =
+      RobinhoodMarketService();
   final _alertController = StreamController<TradeAlert>.broadcast();
   bool _useLiveData = true;
   bool _tickInFlight = false;
   bool _liveErrorLogged = false;
+  String? _robinhoodToken;
 
   Stream<TradeAlert> get alertsStream => _alertController.stream;
 
@@ -33,6 +37,8 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     on<ChangeTimeframe>(_onChangeTimeframe);
     on<UpdateCapital>(_onUpdateCapital);
     on<UpdateAlertPreferences>(_onUpdateAlertPreferences);
+    on<UpdateCryptoDataProvider>(_onUpdateCryptoDataProvider);
+    on<UpdateRobinhoodToken>(_onUpdateRobinhoodToken);
     on<ResetDay>(_onResetDay);
     on<_AddLog>((event, emit) {
       final newLogs = [event.log, ...state.logs].take(80).toList();
@@ -45,17 +51,18 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
   Future<void> _onInitialize(
       InitializeMarket event, Emitter<CryptoState> emit) async {
     List<CoinData> coins;
+    final providerLabel = state.marketProvider.label;
     try {
-      coins =
-          await _liveMarketService.fetchInitialCoins(state.selectedTimeframe);
+      coins = await _fetchInitialFromSelectedProvider(state);
       _useLiveData = true;
-      _addLog('🟢 Live market mode enabled (Binance.US public feed)',
-          TradeLogType.system);
+      _addLog('🟢 Live market mode enabled ($providerLabel)', TradeLogType.system);
     } catch (_) {
       coins = MarketSimulator.generateInitialCoins();
       _useLiveData = false;
       _addLog(
-          '🟡 Live feed unavailable — using simulator data', TradeLogType.warn);
+        '🟡 $providerLabel unavailable — using simulator data',
+        TradeLogType.warn,
+      );
     }
 
     emit(state.copyWith(
@@ -68,7 +75,7 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
         TradeLogType.system);
     _addLog(
         _useLiveData
-            ? '📡 Connected to Binance.US live market feed'
+            ? '📡 Connected to $providerLabel live market feed'
             : '📡 Running in simulation mode',
         TradeLogType.system);
     _addLog(
@@ -89,7 +96,7 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
       var tickMode = state.marketDataMode;
       try {
         if (_useLiveData) {
-          updatedCoins = await _liveMarketService.tickCoins(state.coins);
+          updatedCoins = await _tickFromSelectedProvider(state);
           _liveErrorLogged = false;
           tickMode = MarketDataMode.live;
         } else {
@@ -115,7 +122,7 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
       // Retry live feed every 100 ticks while in simulator fallback
       if (!_useLiveData && _tickCount % 100 == 0) {
         try {
-          final retryCoins = await _liveMarketService.tickCoins(state.coins);
+          final retryCoins = await _tickFromSelectedProvider(state);
           updatedCoins = retryCoins;
           _useLiveData = true;
           _liveErrorLogged = false;
@@ -375,12 +382,67 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     ));
   }
 
+  void _onUpdateCryptoDataProvider(
+    UpdateCryptoDataProvider event,
+    Emitter<CryptoState> emit,
+  ) {
+    if (event.provider == state.marketProvider) return;
+    emit(state.copyWith(marketProvider: event.provider));
+    _addLog(
+      '🔄 Crypto data source set to ${event.provider.label}',
+      TradeLogType.info,
+    );
+    add(InitializeMarket());
+  }
+
+  void _onUpdateRobinhoodToken(
+    UpdateRobinhoodToken event,
+    Emitter<CryptoState> emit,
+  ) {
+    final normalized = event.token.trim();
+    _robinhoodToken = normalized.isEmpty ? null : normalized;
+    _robinhoodMarketService.setApiToken(_robinhoodToken);
+    _addLog(
+      _robinhoodToken == null
+          ? '🔐 Robinhood token cleared'
+          : '🔐 Robinhood token updated',
+      TradeLogType.system,
+    );
+    if (state.marketProvider == CryptoDataProvider.robinhood) {
+      add(InitializeMarket());
+    }
+  }
+
   void _onResetDay(ResetDay event, Emitter<CryptoState> emit) {
     emit(state.copyWith(
       stats: DailyStats(capital: state.stats.capital),
       logs: [],
     ));
     _addLog('🔄 Daily stats reset', TradeLogType.system);
+  }
+
+  Future<List<CoinData>> _fetchInitialFromSelectedProvider(
+    CryptoState snapshot,
+  ) async {
+    if (snapshot.marketProvider == CryptoDataProvider.robinhood) {
+      if ((_robinhoodToken ?? '').isEmpty) {
+        throw StateError('Robinhood token is missing');
+      }
+      return _robinhoodMarketService.fetchInitialCoins(snapshot.selectedTimeframe);
+    }
+    return _binanceMarketService.fetchInitialCoins(snapshot.selectedTimeframe);
+  }
+
+  Future<List<CoinData>> _tickFromSelectedProvider(
+    CryptoState snapshot,
+  ) async {
+    if (snapshot.marketProvider == CryptoDataProvider.robinhood) {
+      if ((_robinhoodToken ?? '').isEmpty) {
+        throw StateError('Robinhood token is missing');
+      }
+      return _robinhoodMarketService.tickCoins(snapshot.coins);
+    }
+    return _binanceMarketService.tickCoins(snapshot.coins);
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

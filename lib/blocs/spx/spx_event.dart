@@ -46,6 +46,42 @@ class BuySpxContract extends SpxEvent {
   List<Object?> get props => [symbol, contracts];
 }
 
+class ApproveSpxOpportunity extends SpxEvent {
+  final String opportunityId;
+  final String symbol;
+  const ApproveSpxOpportunity({
+    required this.opportunityId,
+    required this.symbol,
+  });
+
+  @override
+  List<Object?> get props => [opportunityId, symbol];
+}
+
+class RejectSpxOpportunity extends SpxEvent {
+  final String opportunityId;
+  final String symbol;
+  const RejectSpxOpportunity({
+    required this.opportunityId,
+    required this.symbol,
+  });
+
+  @override
+  List<Object?> get props => [opportunityId, symbol];
+}
+
+class CancelSpxOpportunity extends SpxEvent {
+  final String opportunityId;
+  final String symbol;
+  const CancelSpxOpportunity({
+    required this.opportunityId,
+    required this.symbol,
+  });
+
+  @override
+  List<Object?> get props => [opportunityId, symbol];
+}
+
 /// Close an open SPX position by id.
 class CloseSpxPosition extends SpxEvent {
   final String positionId;
@@ -67,6 +103,31 @@ class UpdateTradierToken extends SpxEvent {
   List<Object?> get props => [token];
 }
 
+class UpdateSpxExecutionSettings extends SpxEvent {
+  final String executionMode;
+  final int entryDelaySeconds;
+  final int validationWindowSeconds;
+  final double maxSlippagePct;
+  final bool notificationsEnabled;
+
+  const UpdateSpxExecutionSettings({
+    required this.executionMode,
+    required this.entryDelaySeconds,
+    required this.validationWindowSeconds,
+    required this.maxSlippagePct,
+    required this.notificationsEnabled,
+  });
+
+  @override
+  List<Object?> get props => [
+        executionMode,
+        entryDelaySeconds,
+        validationWindowSeconds,
+        maxSlippagePct,
+        notificationsEnabled,
+      ];
+}
+
 class UpdateSpxTermFilter extends SpxEvent {
   final SpxTermFilter filter;
   const UpdateSpxTermFilter(this.filter);
@@ -85,4 +146,33 @@ class _SpxAddLog extends SpxEvent {
   const _SpxAddLog(this.log);
   @override
   List<Object?> get props => [log.id];
+}
+
+class _ExecutePendingOpportunity extends SpxEvent {
+  final String opportunityId;
+  final String symbol;
+  const _ExecutePendingOpportunity({
+    required this.opportunityId,
+    required this.symbol,
+  });
+
+  @override
+  List<Object?> get props => [opportunityId, symbol];
+}
+
+class _ExpirePendingOpportunity extends SpxEvent {
+  final String opportunityId;
+  final String symbol;
+  final String reasonCode;
+  final String reasonText;
+
+  const _ExpirePendingOpportunity({
+    required this.opportunityId,
+    required this.symbol,
+    required this.reasonCode,
+    required this.reasonText,
+  });
+
+  @override
+  List<Object?> get props => [opportunityId, symbol, reasonCode, reasonText];
 }
