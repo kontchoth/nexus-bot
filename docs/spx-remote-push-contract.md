@@ -104,3 +104,7 @@ This repo includes Firebase Cloud Functions sender scaffolding:
 - HTTP auth key env var: `SPX_PUSH_DISPATCH_KEY` (`functions/.env`)
 - helper docs: `docs/spx-cloud-function-sender.md`
 - helper invoke script: `scripts/send_spx_push_function.sh`
+
+Spark-plan fallback (no functions deploy):
+
+- local/CI dispatcher script: `functions/scripts/dispatch_spx_push.js`

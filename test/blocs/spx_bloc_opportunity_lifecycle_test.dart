@@ -174,6 +174,147 @@ void main() {
           SpxOpportunityExecutionMode.autoImmediate);
       expect(harness.bloc.state.positions, hasLength(1));
     });
+
+    test('auto scanner honors near OTM targeting mode', () async {
+      final harness = await _buildHarness(
+        userId: userId,
+        executionMode: SpxOpportunityExecutionMode.autoImmediate,
+        contractTargetingMode: SpxContractTargetingMode.nearOtm,
+        service: _StaticChainSpxOptionsService(
+          spot: 5750.0,
+          contracts: [
+            _buildTestCallContract(
+              symbol: 'CALL-ITM',
+              strike: 5740,
+              delta: 0.55,
+            ),
+            _buildTestCallContract(
+              symbol: 'CALL-ATM',
+              strike: 5750,
+              delta: 0.33,
+            ),
+            _buildTestCallContract(
+              symbol: 'CALL-OTM',
+              strike: 5760,
+              delta: 0.20,
+            ),
+          ],
+        ),
+      );
+      addTearDown(harness.bloc.close);
+
+      await _runScannerWindow(harness.bloc);
+      await _waitFor(() => harness.bloc.state.positions.isNotEmpty);
+
+      expect(harness.bloc.state.positions.single.contract.symbol, 'CALL-OTM');
+    });
+
+    test('auto scanner honors near ITM targeting mode', () async {
+      final harness = await _buildHarness(
+        userId: userId,
+        executionMode: SpxOpportunityExecutionMode.autoImmediate,
+        contractTargetingMode: SpxContractTargetingMode.nearItm,
+        service: _StaticChainSpxOptionsService(
+          spot: 5750.0,
+          contracts: [
+            _buildTestCallContract(
+              symbol: 'CALL-ITM',
+              strike: 5740,
+              delta: 0.55,
+            ),
+            _buildTestCallContract(
+              symbol: 'CALL-ATM',
+              strike: 5750,
+              delta: 0.33,
+            ),
+            _buildTestCallContract(
+              symbol: 'CALL-OTM',
+              strike: 5760,
+              delta: 0.20,
+            ),
+          ],
+        ),
+      );
+      addTearDown(harness.bloc.close);
+
+      await _runScannerWindow(harness.bloc);
+      await _waitFor(() => harness.bloc.state.positions.isNotEmpty);
+
+      expect(harness.bloc.state.positions.single.contract.symbol, 'CALL-ITM');
+    });
+
+    test('tradier credentials update rebuilds the sandbox service', () async {
+      final bloc = SpxBloc(
+        userId: userId,
+        journalRepository: LocalSpxTradeJournalRepository(),
+        opportunityJournalRepository: LocalSpxOpportunityJournalRepository(),
+        autoTickEnabled: false,
+        optionsServiceBuilder: ({
+          String? apiToken,
+          required String tradierEnvironment,
+        }) {
+          return _InspectableSpxOptionsService(
+            token: apiToken,
+            environment: tradierEnvironment,
+            contract: _buildTestCallContract(symbol: 'SPX-$tradierEnvironment'),
+          );
+        },
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const UpdateTradierCredentials(
+        token: 'sandbox-token',
+        environment: SpxTradierEnvironment.sandbox,
+      ));
+
+      await _waitFor(
+        () =>
+            bloc.state.tradierEnvironment == SpxTradierEnvironment.sandbox &&
+            bloc.state.dataMode == SpxDataMode.live &&
+            bloc.state.chain.isNotEmpty,
+      );
+
+      expect(bloc.state.tradierToken, 'sandbox-token');
+      expect(bloc.state.spotPrice, 5711.0);
+      expect(bloc.state.chain.first.symbol, 'SPX-sandbox');
+    });
+
+    test('tradier credentials update rebuilds the production service',
+        () async {
+      final bloc = SpxBloc(
+        userId: userId,
+        journalRepository: LocalSpxTradeJournalRepository(),
+        opportunityJournalRepository: LocalSpxOpportunityJournalRepository(),
+        autoTickEnabled: false,
+        optionsServiceBuilder: ({
+          String? apiToken,
+          required String tradierEnvironment,
+        }) {
+          return _InspectableSpxOptionsService(
+            token: apiToken,
+            environment: tradierEnvironment,
+            contract: _buildTestCallContract(symbol: 'SPX-$tradierEnvironment'),
+          );
+        },
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const UpdateTradierCredentials(
+        token: 'production-token',
+        environment: SpxTradierEnvironment.production,
+      ));
+
+      await _waitFor(
+        () =>
+            bloc.state.tradierEnvironment == SpxTradierEnvironment.production &&
+            bloc.state.dataMode == SpxDataMode.live &&
+            bloc.state.chain.isNotEmpty,
+      );
+
+      expect(bloc.state.tradierToken, 'production-token');
+      expect(bloc.state.spotPrice, 5811.0);
+      expect(bloc.state.chain.first.symbol, 'SPX-production');
+    });
   });
 }
 
@@ -237,6 +378,8 @@ Future<SpxOpportunityJournalRecord> _waitForOpportunity({
 Future<_Harness> _buildHarness({
   required String userId,
   required String executionMode,
+  String contractTargetingMode = SpxContractTargetingMode.deltaZone,
+  SpxOptionsService? service,
   int entryDelaySeconds = 30,
   int validationWindowSeconds = 120,
 }) async {
@@ -244,13 +387,13 @@ Future<_Harness> _buildHarness({
   final journal = LocalSpxTradeJournalRepository();
   final contract = _buildTestCallContract(
       symbol: 'SPX TEST ${DateTime.now().microsecondsSinceEpoch}');
-  final service = _FakeSpxOptionsService(contract: contract);
+  final optionsService = service ?? _FakeSpxOptionsService(contract: contract);
 
   final bloc = SpxBloc(
     userId: userId,
     journalRepository: journal,
     opportunityJournalRepository: opportunities,
-    optionsService: service,
+    optionsService: optionsService,
     autoTickEnabled: false,
     scannerOverrideAction: SpxStrategyActionType.goLong,
   );
@@ -260,6 +403,7 @@ Future<_Harness> _buildHarness({
     () => bloc.state.chain.isNotEmpty && bloc.state.selectedExpiration != null,
   );
 
+  bloc.add(UpdateSpxContractTargeting(contractTargetingMode));
   bloc.add(
     UpdateSpxExecutionSettings(
       executionMode: executionMode,
@@ -291,14 +435,18 @@ Future<void> _waitFor(
   }
 }
 
-OptionsContract _buildTestCallContract({required String symbol}) {
+OptionsContract _buildTestCallContract({
+  required String symbol,
+  double strike = 5750,
+  double delta = 0.33,
+}) {
   final now = DateTime.now();
   final expiry =
       DateTime(now.year, now.month, now.day).add(const Duration(days: 8));
   return OptionsContract(
     symbol: symbol,
     side: OptionsSide.call,
-    strike: 5750,
+    strike: strike,
     expiry: expiry,
     daysToExpiry: 7,
     bid: 10.0,
@@ -306,8 +454,8 @@ OptionsContract _buildTestCallContract({required String symbol}) {
     lastPrice: 10.2,
     openInterest: 12000,
     volume: 1800,
-    greeks: const OptionsGreeks(
-      delta: 0.33,
+    greeks: OptionsGreeks(
+      delta: delta,
       gamma: 0.015,
       theta: -0.24,
       vega: 0.12,
@@ -352,6 +500,86 @@ class _FakeSpxOptionsService extends SpxOptionsService {
       List<OptionsContract> contracts) async {
     final now = DateTime.now();
     return contracts.map((c) => c.copyWith(lastUpdated: now)).toList();
+  }
+}
+
+class _InspectableSpxOptionsService extends SpxOptionsService {
+  final String? token;
+  final String environment;
+  final OptionsContract contract;
+
+  _InspectableSpxOptionsService({
+    required this.token,
+    required this.environment,
+    required this.contract,
+  }) : super(
+          apiToken: token,
+          useSandbox: SpxTradierEnvironment.isSandbox(environment),
+        );
+
+  @override
+  bool get isMarketOpenNow => true;
+
+  @override
+  bool get isLive => (token ?? '').trim().isNotEmpty;
+
+  @override
+  Future<double> fetchSpxSpot() async {
+    return SpxTradierEnvironment.isSandbox(environment) ? 5711.0 : 5811.0;
+  }
+
+  @override
+  Future<List<String>> fetchExpirations({int limit = 4}) async {
+    return [_formatYmd(contract.expiry)];
+  }
+
+  @override
+  Future<List<OptionsContract>> fetchChain({required String expiration}) async {
+    return [
+      contract.copyWith(lastUpdated: DateTime.now()),
+    ];
+  }
+
+  @override
+  Future<List<OptionsContract>> tickPositions(
+      List<OptionsContract> contracts) async {
+    return contracts;
+  }
+}
+
+class _StaticChainSpxOptionsService extends SpxOptionsService {
+  final double spot;
+  final List<OptionsContract> contracts;
+
+  _StaticChainSpxOptionsService({
+    required this.spot,
+    required this.contracts,
+  }) : super(apiToken: null);
+
+  @override
+  bool get isMarketOpenNow => true;
+
+  @override
+  bool get isLive => false;
+
+  @override
+  Future<double> fetchSpxSpot() async => spot;
+
+  @override
+  Future<List<String>> fetchExpirations({int limit = 4}) async {
+    return [_formatYmd(contracts.first.expiry)];
+  }
+
+  @override
+  Future<List<OptionsContract>> fetchChain({required String expiration}) async {
+    final now = DateTime.now();
+    return contracts.map((c) => c.copyWith(lastUpdated: now)).toList();
+  }
+
+  @override
+  Future<List<OptionsContract>> tickPositions(
+      List<OptionsContract> contracts) async {
+    return contracts;
   }
 }
 

@@ -2,6 +2,25 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+class SpxTradierEnvironment {
+  static const sandbox = 'sandbox';
+  static const production = 'production';
+
+  static const values = <String>{
+    sandbox,
+    production,
+  };
+
+  static String normalize(String? raw) {
+    final value = (raw ?? '').trim().toLowerCase();
+    return values.contains(value) ? value : production;
+  }
+
+  static bool isSandbox(String? raw) => normalize(raw) == sandbox;
+
+  static String label(String? raw) => isSandbox(raw) ? 'Sandbox' : 'Production';
+}
+
 class SpxOpportunityExecutionMode {
   static const manualConfirm = 'manual_confirm';
   static const autoAfterDelay = 'auto_after_delay';
@@ -19,11 +38,44 @@ class SpxOpportunityExecutionMode {
   }
 }
 
+class SpxContractTargetingMode {
+  static const deltaZone = 'delta_zone';
+  static const atm = 'atm';
+  static const nearItm = 'near_itm';
+  static const nearOtm = 'near_otm';
+  static const atmOrNearItm = 'atm_or_near_itm';
+
+  static const values = <String>{
+    deltaZone,
+    atm,
+    nearItm,
+    nearOtm,
+    atmOrNearItm,
+  };
+
+  static String normalize(String? raw) {
+    final value = (raw ?? '').trim();
+    return values.contains(value) ? value : deltaZone;
+  }
+
+  static String label(String? raw) {
+    return switch (normalize(raw)) {
+      atm => 'ATM',
+      nearItm => 'Near ITM',
+      nearOtm => 'Near OTM',
+      atmOrNearItm => 'ATM / Near ITM',
+      _ => 'Delta Zone',
+    };
+  }
+}
+
 class AppPreferences {
   final bool alertsEnabled;
   final bool hapticsEnabled;
   final String cryptoDataProvider;
   final String spxTermMode;
+  final String spxTradierEnvironment;
+  final String spxContractTargetingMode;
   final int spxExactDte;
   final int spxMinDte;
   final int spxMaxDte;
@@ -37,6 +89,8 @@ class AppPreferences {
     this.hapticsEnabled = true,
     this.cryptoDataProvider = 'binance',
     this.spxTermMode = 'exact',
+    this.spxTradierEnvironment = SpxTradierEnvironment.production,
+    this.spxContractTargetingMode = SpxContractTargetingMode.deltaZone,
     this.spxExactDte = 7,
     this.spxMinDte = 5,
     this.spxMaxDte = 14,
@@ -52,6 +106,8 @@ class AppPreferences {
     bool? hapticsEnabled,
     String? cryptoDataProvider,
     String? spxTermMode,
+    String? spxTradierEnvironment,
+    String? spxContractTargetingMode,
     int? spxExactDte,
     int? spxMinDte,
     int? spxMaxDte,
@@ -65,6 +121,12 @@ class AppPreferences {
       hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
       cryptoDataProvider: cryptoDataProvider ?? this.cryptoDataProvider,
       spxTermMode: spxTermMode ?? this.spxTermMode,
+      spxTradierEnvironment: SpxTradierEnvironment.normalize(
+        spxTradierEnvironment ?? this.spxTradierEnvironment,
+      ),
+      spxContractTargetingMode: SpxContractTargetingMode.normalize(
+        spxContractTargetingMode ?? this.spxContractTargetingMode,
+      ),
       spxExactDte: spxExactDte ?? this.spxExactDte,
       spxMinDte: spxMinDte ?? this.spxMinDte,
       spxMaxDte: spxMaxDte ?? this.spxMaxDte,
@@ -88,6 +150,10 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
   static const _hapticsSuffix = 'settings_haptics_enabled';
   static const _cryptoDataProviderSuffix = 'settings_crypto_data_provider';
   static const _spxTermModeSuffix = 'settings_spx_term_mode';
+  static const _spxTradierEnvironmentSuffix =
+      'settings_spx_tradier_environment';
+  static const _spxContractTargetingModeSuffix =
+      'settings_spx_contract_targeting_mode';
   static const _spxExactDteSuffix = 'settings_spx_exact_dte';
   static const _spxMinDteSuffix = 'settings_spx_min_dte';
   static const _spxMaxDteSuffix = 'settings_spx_max_dte';
@@ -102,6 +168,10 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
   String _cryptoDataProviderKey(String userId) =>
       '$userId-$_cryptoDataProviderSuffix';
   String _spxTermModeKey(String userId) => '$userId-$_spxTermModeSuffix';
+  String _spxTradierEnvironmentKey(String userId) =>
+      '$userId-$_spxTradierEnvironmentSuffix';
+  String _spxContractTargetingModeKey(String userId) =>
+      '$userId-$_spxContractTargetingModeSuffix';
   String _spxExactDteKey(String userId) => '$userId-$_spxExactDteSuffix';
   String _spxMinDteKey(String userId) => '$userId-$_spxMinDteSuffix';
   String _spxMaxDteKey(String userId) => '$userId-$_spxMaxDteSuffix';
@@ -138,6 +208,12 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
       cryptoDataProvider:
           prefs.getString(_cryptoDataProviderKey(userId)) ?? 'binance',
       spxTermMode: prefs.getString(_spxTermModeKey(userId)) ?? 'exact',
+      spxTradierEnvironment: SpxTradierEnvironment.normalize(
+        prefs.getString(_spxTradierEnvironmentKey(userId)),
+      ),
+      spxContractTargetingMode: SpxContractTargetingMode.normalize(
+        prefs.getString(_spxContractTargetingModeKey(userId)),
+      ),
       spxExactDte: prefs.getInt(_spxExactDteKey(userId)) ?? 7,
       spxMinDte: minDte,
       spxMaxDte: maxDte < minDte ? minDte : maxDte,
@@ -158,6 +234,16 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
       preferences.cryptoDataProvider,
     );
     await prefs.setString(_spxTermModeKey(userId), preferences.spxTermMode);
+    await prefs.setString(
+      _spxTradierEnvironmentKey(userId),
+      SpxTradierEnvironment.normalize(preferences.spxTradierEnvironment),
+    );
+    await prefs.setString(
+      _spxContractTargetingModeKey(userId),
+      SpxContractTargetingMode.normalize(
+        preferences.spxContractTargetingMode,
+      ),
+    );
     await prefs.setInt(_spxExactDteKey(userId), preferences.spxExactDte);
     await prefs.setInt(_spxMinDteKey(userId), preferences.spxMinDte);
     await prefs.setInt(_spxMaxDteKey(userId), preferences.spxMaxDte);
@@ -215,6 +301,10 @@ class FirebaseAppSettingsRepository extends LocalAppSettingsRepository {
       final spxExact = (prefsMap['spxExactDte'] as num?)?.toInt();
       final spxMin = (prefsMap['spxMinDte'] as num?)?.toInt();
       final spxMax = (prefsMap['spxMaxDte'] as num?)?.toInt();
+      final spxTradierEnvironment =
+          prefsMap['spxTradierEnvironment'] as String?;
+      final spxContractTargetingMode =
+          prefsMap['spxContractTargetingMode'] as String?;
       final spxExecutionMode =
           prefsMap['spxOpportunityExecutionMode'] as String?;
       final spxEntryDelay = (prefsMap['spxEntryDelaySeconds'] as num?)?.toInt();
@@ -230,6 +320,12 @@ class FirebaseAppSettingsRepository extends LocalAppSettingsRepository {
         cryptoDataProvider: prefsMap['cryptoDataProvider'] as String? ??
             local.cryptoDataProvider,
         spxTermMode: prefsMap['spxTermMode'] as String? ?? local.spxTermMode,
+        spxTradierEnvironment: spxTradierEnvironment == null
+            ? local.spxTradierEnvironment
+            : SpxTradierEnvironment.normalize(spxTradierEnvironment),
+        spxContractTargetingMode: spxContractTargetingMode == null
+            ? local.spxContractTargetingMode
+            : SpxContractTargetingMode.normalize(spxContractTargetingMode),
         spxExactDte: spxExact ?? local.spxExactDte,
         spxMinDte: spxMin ?? local.spxMinDte,
         spxMaxDte: spxMax ?? local.spxMaxDte,
@@ -266,6 +362,12 @@ class FirebaseAppSettingsRepository extends LocalAppSettingsRepository {
           'hapticsEnabled': preferences.hapticsEnabled,
           'cryptoDataProvider': preferences.cryptoDataProvider,
           'spxTermMode': preferences.spxTermMode,
+          'spxTradierEnvironment': SpxTradierEnvironment.normalize(
+            preferences.spxTradierEnvironment,
+          ),
+          'spxContractTargetingMode': SpxContractTargetingMode.normalize(
+            preferences.spxContractTargetingMode,
+          ),
           'spxExactDte': preferences.spxExactDte,
           'spxMinDte': preferences.spxMinDte,
           'spxMaxDte': preferences.spxMaxDte,

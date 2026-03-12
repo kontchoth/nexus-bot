@@ -1,153 +1,78 @@
-# SPX Cloud Function Push Sender
+# SPX Push Sender (Functions + Spark Fallback)
 
-## Overview
-This repo now includes Firebase Cloud Function senders for SPX opportunity push fanout:
+## Important Constraint
+If deploy shows:
 
-- Function names:
-  - `sendSpxOpportunityPush` (callable)
-  - `sendSpxOpportunityPushHttp` (HTTP + secret)
-- Runtime: Node.js 20
-- Source: `functions/index.js`
+- `artifactregistry.googleapis.com can't be enabled`
+- `project must be on the Blaze plan`
 
-This setup does not require Google Secret Manager, so it can run without Blaze-specific secret-manager setup.
+then Cloud Functions deployment is blocked on your current plan.
 
-It sends notifications to device tokens in Firestore path:
+Use the Spark-compatible fallback below to send production pushes without deploying functions.
 
-- `users/{userId}/push_tokens/{token}`
+## Option A: Cloud Functions (requires Blaze)
+Functions in `functions/index.js`:
 
-Only token docs with `alertsEnabled == true` are targeted.
+- `sendSpxOpportunityPush` (callable)
+- `sendSpxOpportunityPushHttp` (HTTP + key from env var `SPX_PUSH_DISPATCH_KEY`)
 
-## Auth Rules
-Callable (`sendSpxOpportunityPush`) caller must be:
-
-1. the same user (`request.auth.uid == userId`), or
-2. an admin caller with custom claim `admin: true`.
-
-Otherwise, callable returns `permission-denied`.
-
-HTTP (`sendSpxOpportunityPushHttp`) caller must provide secret key via one of:
-
-- `x-spx-dispatch-key: <secret>`
-- `Authorization: Bearer <secret>`
-
-Secret is loaded from function environment variable:
-
-- `SPX_PUSH_DISPATCH_KEY`
-
-## Input Contract
-Payload mirrors `docs/spx-remote-push-contract.md`.
-
-Required:
-
-- `userId` (string)
-- one of:
-  - `payload`, or
-  - `opportunityId`, or
-  - `target=spx_opportunities`
-
-Optional:
-
-- `title` (string)
-- `body` (string)
-- `platform` (`android|ios|macos|web|windows|linux|fuchsia`)
-- `dryRun` (bool)
-
-Payload behavior:
-
-- `payload=spx_opportunities` routes to list.
-- `payload=spx_opportunity:{opportunityId}` routes to focused opportunity.
-- if `opportunityId` is provided and payload is missing, payload is derived automatically.
-
-## Response Shape
-Returns summary object:
-
-- `attempted`
-- `success`
-- `failed`
-- `invalidTokensRemoved`
-- `messageIds` (FCM message IDs)
-- `errors` (token-level failure details)
-
-## Invalid Token Cleanup
-On non-dry-run sends, tokens are deleted from Firestore when FCM returns:
-
-- `messaging/invalid-registration-token`
-- `messaging/registration-token-not-registered`
-
-## Local Setup
-From repo root:
+Deploy path:
 
 1. `cd functions`
 2. `npm install`
-3. `npx firebase login`
-4. `npx firebase use nexusbot-5edeb` (or your target project)
-5. `npm run serve`
+3. `cp .env.example .env`
+4. set `SPX_PUSH_DISPATCH_KEY` in `.env`
+5. `npx firebase deploy --only functions`
 
-Set HTTP dispatch secret:
+## Option B: Spark-Compatible Local/CI Dispatcher
+Use local script (no Functions deploy required):
 
-1. `cp .env.example .env`
-2. Edit `.env` and set `SPX_PUSH_DISPATCH_KEY`
+- `functions/scripts/dispatch_spx_push.js`
 
-## Deploy
-From `functions/` directory:
+It reads:
 
-1. `npm install`
-2. Ensure `.env` contains `SPX_PUSH_DISPATCH_KEY`
-3. `npm run deploy`
+- Firestore token registry: `users/{userId}/push_tokens`
+- filters `alertsEnabled == true`
+- optional platform filter
+- sends FCM via Admin SDK
+- prunes invalid tokens (unless disabled)
 
-or from repo root:
+### Setup
+1. `cd functions`
+2. `npm install`
+3. provide credentials:
+   - either `--service-account /path/to/service-account.json`
+   - or `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
 
-- `npx firebase deploy --only functions`
-
-## Example Callable Data
-```json
-{
-  "userId": "<firebase_uid>",
-  "opportunityId": "opp_123456",
-  "title": "SPX Opportunity Found",
-  "body": "SPX 0XXC05800000 · 7DTE",
-  "dryRun": false
-}
-```
-
-## Example HTTP Request
+### Example
 ```bash
-curl -X POST "https://us-central1-<project-id>.cloudfunctions.net/sendSpxOpportunityPushHttp" \
-  -H "Content-Type: application/json" \
-  -H "x-spx-dispatch-key: <SPX_PUSH_DISPATCH_KEY>" \
-  -d '{
-    "userId": "<firebase_uid>",
-    "opportunityId": "opp_123456",
-    "title": "SPX Opportunity Found",
-    "body": "SPX 0XXC05800000 · 7DTE",
-    "dryRun": false
-  }'
-```
-
-Equivalent explicit payload:
-
-```json
-{
-  "userId": "<firebase_uid>",
-  "payload": "spx_opportunity:opp_123456",
-  "title": "SPX Opportunity Found",
-  "body": "SPX 0XXC05800000 · 7DTE"
-}
-```
-
-## Helper Script
-You can invoke the HTTP sender with:
-
-- `scripts/send_spx_push_function.sh`
-
-Example:
-
-```bash
-scripts/send_spx_push_function.sh \
+cd /Users/hermann/working-copy/hintekk/mobile/nexus-bot/functions
+npm run dispatch-spx-push -- \
   --project nexusbot-5edeb \
   --user <firebase_uid> \
-  --secret <SPX_PUSH_DISPATCH_KEY> \
   --opportunity-id opp_123456 \
   --title "SPX Opportunity Found" \
-  --body "SPX 0XXC05800000 · 7DTE"
+  --body "SPX 0XXC05800000 · 7DTE" \
+  --service-account /absolute/path/service-account.json
 ```
+
+### Alternative Payload Forms
+- list route:
+  - `--payload spx_opportunities`
+  - or `--target spx_opportunities`
+- focused route:
+  - `--payload spx_opportunity:<id>`
+  - or `--opportunity-id <id>`
+
+### Optional Flags
+- `--platform android|ios|macos|web|windows|linux|fuchsia`
+- `--dry-run true|false`
+- `--prune-invalid true|false`
+
+## Payload Contract
+Accepted payloads remain:
+
+- `spx_opportunities`
+- `spx_opportunity:{opportunityId}`
+
+See `docs/spx-remote-push-contract.md` for full contract.

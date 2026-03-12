@@ -1,7 +1,9 @@
 part of 'spx_bloc.dart';
 
 enum SpxDataMode { live, simulator }
+
 enum SpxScannerStatus { active, paused }
+
 enum SpxTermMode { exact, range }
 
 class SpxTermFilter extends Equatable {
@@ -90,6 +92,8 @@ class SpxState extends Equatable {
 
   /// Tradier API token (stored in-memory; persisted via flutter_secure_storage).
   final String? tradierToken;
+  final String tradierEnvironment;
+  final String contractTargetingMode;
   final SpxTermFilter termFilter;
   final SpxStrategySnapshot? strategySnapshot;
 
@@ -111,6 +115,8 @@ class SpxState extends Equatable {
     this.selectedSymbol,
     this.gexData,
     this.tradierToken,
+    this.tradierEnvironment = SpxTradierEnvironment.production,
+    this.contractTargetingMode = SpxContractTargetingMode.deltaZone,
     this.strategySnapshot,
     this.termFilter = const SpxTermFilter(
       mode: SpxTermMode.exact,
@@ -123,16 +129,23 @@ class SpxState extends Equatable {
     this.winTrades = 0,
   });
 
-  factory SpxState.initial() => const SpxState(
-        chain: [],
-        positions: [],
-        expirations: [],
+  factory SpxState.initial({
+    String? tradierToken,
+    String tradierEnvironment = SpxTradierEnvironment.production,
+  }) =>
+      SpxState(
+        chain: const [],
+        positions: const [],
+        expirations: const [],
         spotPrice: 5750.0,
         isMarketOpen: false,
-        logs: [],
+        logs: const [],
         scannerStatus: SpxScannerStatus.paused,
         dataMode: SpxDataMode.simulator,
-        termFilter: SpxTermFilter(
+        tradierToken: tradierToken,
+        tradierEnvironment: SpxTradierEnvironment.normalize(tradierEnvironment),
+        contractTargetingMode: SpxContractTargetingMode.deltaZone,
+        termFilter: const SpxTermFilter(
           mode: SpxTermMode.exact,
           exactDte: 7,
           minDte: 5,
@@ -145,14 +158,20 @@ class SpxState extends Equatable {
   double get unrealizedPnL =>
       positions.fold(0.0, (s, p) => s + p.unrealizedPnL);
 
-  double get winRate =>
-      totalTrades == 0 ? 0 : (winTrades / totalTrades) * 100;
+  double get winRate => totalTrades == 0 ? 0 : (winTrades / totalTrades) * 100;
+
+  bool get isTradierSandbox =>
+      SpxTradierEnvironment.isSandbox(tradierEnvironment);
+
+  String get tradierEnvironmentLabel =>
+      SpxTradierEnvironment.label(tradierEnvironment).toLowerCase();
 
   /// Contracts matching the selected expiration, sorted by strike.
   List<OptionsContract> get filteredChain {
     if (selectedExpiration == null) return chain;
     return chain
-        .where((c) => c.expiry.toIso8601String().startsWith(selectedExpiration!))
+        .where(
+            (c) => c.expiry.toIso8601String().startsWith(selectedExpiration!))
         .toList()
       ..sort((a, b) => a.strike.compareTo(b.strike));
   }
@@ -185,10 +204,11 @@ class SpxState extends Equatable {
   }
 
   /// Top-scored buy signals for the scanner card.
-  List<OptionsContract> get buySignals => chain
-      .where((c) => c.signal == SpxSignalType.buy)
-      .toList()
-        ..sort((a, b) => a.greeks.delta.abs().compareTo(b.greeks.delta.abs()));
+  List<OptionsContract> get buySignals => orderSpxContractsForTargeting(
+        chain.where((c) => c.signal == SpxSignalType.buy),
+        spot: spotPrice,
+        targetingMode: contractTargetingMode,
+      );
 
   OptionsContract? get selectedContract {
     if (selectedSymbol == null) return null;
@@ -213,6 +233,8 @@ class SpxState extends Equatable {
     GexData? gexData,
     List<TradeLog>? logs,
     String? tradierToken,
+    String? tradierEnvironment,
+    String? contractTargetingMode,
     SpxStrategySnapshot? strategySnapshot,
     SpxTermFilter? termFilter,
     double? realizedPnL,
@@ -220,23 +242,30 @@ class SpxState extends Equatable {
     int? winTrades,
   }) {
     return SpxState(
-      chain:               chain              ?? this.chain,
-      positions:           positions          ?? this.positions,
-      expirations:         expirations        ?? this.expirations,
-      spotPrice:           spotPrice          ?? this.spotPrice,
-      isMarketOpen:        isMarketOpen       ?? this.isMarketOpen,
-      logs:                logs               ?? this.logs,
-      scannerStatus:       scannerStatus      ?? this.scannerStatus,
-      dataMode:            dataMode           ?? this.dataMode,
-      selectedExpiration:  selectedExpiration ?? this.selectedExpiration,
-      selectedSymbol:      clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
-      gexData:             gexData            ?? this.gexData,
-      tradierToken:        tradierToken       ?? this.tradierToken,
-      strategySnapshot:    strategySnapshot   ?? this.strategySnapshot,
-      termFilter:          termFilter         ?? this.termFilter,
-      realizedPnL:         realizedPnL        ?? this.realizedPnL,
-      totalTrades:         totalTrades        ?? this.totalTrades,
-      winTrades:           winTrades          ?? this.winTrades,
+      chain: chain ?? this.chain,
+      positions: positions ?? this.positions,
+      expirations: expirations ?? this.expirations,
+      spotPrice: spotPrice ?? this.spotPrice,
+      isMarketOpen: isMarketOpen ?? this.isMarketOpen,
+      logs: logs ?? this.logs,
+      scannerStatus: scannerStatus ?? this.scannerStatus,
+      dataMode: dataMode ?? this.dataMode,
+      selectedExpiration: selectedExpiration ?? this.selectedExpiration,
+      selectedSymbol:
+          clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
+      gexData: gexData ?? this.gexData,
+      tradierToken: tradierToken ?? this.tradierToken,
+      tradierEnvironment: SpxTradierEnvironment.normalize(
+        tradierEnvironment ?? this.tradierEnvironment,
+      ),
+      contractTargetingMode: SpxContractTargetingMode.normalize(
+        contractTargetingMode ?? this.contractTargetingMode,
+      ),
+      strategySnapshot: strategySnapshot ?? this.strategySnapshot,
+      termFilter: termFilter ?? this.termFilter,
+      realizedPnL: realizedPnL ?? this.realizedPnL,
+      totalTrades: totalTrades ?? this.totalTrades,
+      winTrades: winTrades ?? this.winTrades,
     );
   }
 
@@ -254,6 +283,8 @@ class SpxState extends Equatable {
         gexData,
         logs,
         tradierToken,
+        tradierEnvironment,
+        contractTargetingMode,
         strategySnapshot,
         termFilter,
         realizedPnL,

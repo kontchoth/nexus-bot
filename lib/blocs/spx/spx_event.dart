@@ -95,12 +95,18 @@ class ToggleSpxScanner extends SpxEvent {
   const ToggleSpxScanner();
 }
 
-/// Update the Tradier API token (triggers live-data retry).
-class UpdateTradierToken extends SpxEvent {
+/// Update Tradier credentials and endpoint selection.
+class UpdateTradierCredentials extends SpxEvent {
   final String token;
-  const UpdateTradierToken(this.token);
+  final String environment;
+
+  const UpdateTradierCredentials({
+    required this.token,
+    required this.environment,
+  });
+
   @override
-  List<Object?> get props => [token];
+  List<Object?> get props => [token, environment];
 }
 
 class UpdateSpxExecutionSettings extends SpxEvent {
@@ -126,6 +132,15 @@ class UpdateSpxExecutionSettings extends SpxEvent {
         maxSlippagePct,
         notificationsEnabled,
       ];
+}
+
+class UpdateSpxContractTargeting extends SpxEvent {
+  final String mode;
+
+  const UpdateSpxContractTargeting(this.mode);
+
+  @override
+  List<Object?> get props => [mode];
 }
 
 class UpdateSpxTermFilter extends SpxEvent {

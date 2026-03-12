@@ -7,6 +7,8 @@ enum OptionsSide { call, put }
 
 enum SpxSignalType { buy, sell, watch }
 
+enum SpxContractMoneyness { itm, atm, otm }
+
 // ── Greeks ────────────────────────────────────────────────────────────────────
 
 /// The four main option sensitivities used for risk and signal scoring.
@@ -54,6 +56,8 @@ class OptionsGreeks extends Equatable {
 
 /// A single row in the SPX options chain.
 class OptionsContract extends Equatable {
+  static const double atmTolerancePoints = 5.0;
+
   /// OCC symbol, e.g. "SPX 241220C05800000"
   final String symbol;
   final OptionsSide side;
@@ -100,6 +104,55 @@ class OptionsContract extends Equatable {
 
   /// Mid-point of bid/ask spread.
   double get midPrice => (bid + ask) / 2;
+
+  double strikeDistanceFromSpot(double spot) => (strike - spot).abs();
+
+  double signedMoneynessDistance(double spot) {
+    return side == OptionsSide.call ? spot - strike : strike - spot;
+  }
+
+  bool isAtmForSpot(
+    double spot, {
+    double tolerancePoints = atmTolerancePoints,
+  }) {
+    return strikeDistanceFromSpot(spot) <= tolerancePoints;
+  }
+
+  SpxContractMoneyness moneynessForSpot(
+    double spot, {
+    double tolerancePoints = atmTolerancePoints,
+  }) {
+    if (isAtmForSpot(spot, tolerancePoints: tolerancePoints)) {
+      return SpxContractMoneyness.atm;
+    }
+    return signedMoneynessDistance(spot) > 0
+        ? SpxContractMoneyness.itm
+        : SpxContractMoneyness.otm;
+  }
+
+  bool isNearItmForSpot(
+    double spot, {
+    int maxSteps = 1,
+    double tolerancePoints = atmTolerancePoints,
+  }) {
+    final steps = maxSteps.clamp(1, 10);
+    final maxDistance = tolerancePoints * (steps + 1);
+    return moneynessForSpot(spot, tolerancePoints: tolerancePoints) ==
+            SpxContractMoneyness.itm &&
+        strikeDistanceFromSpot(spot) <= maxDistance;
+  }
+
+  bool isNearOtmForSpot(
+    double spot, {
+    int maxSteps = 1,
+    double tolerancePoints = atmTolerancePoints,
+  }) {
+    final steps = maxSteps.clamp(1, 10);
+    final maxDistance = tolerancePoints * (steps + 1);
+    return moneynessForSpot(spot, tolerancePoints: tolerancePoints) ==
+            SpxContractMoneyness.otm &&
+        strikeDistanceFromSpot(spot) <= maxDistance;
+  }
 
   /// Whether this contract is in the liquid, tradeable delta zone (0.20–0.45).
   bool get isTargetDelta =>
@@ -176,7 +229,7 @@ class SpxPosition extends Equatable {
     required this.entryPremium,
     required this.currentPremium,
     required this.openedAt,
-    this.stopLossPct = 1.0,   // 100% of premium (max loss for long options)
+    this.stopLossPct = 1.0, // 100% of premium (max loss for long options)
     this.takeProfitPct = 0.50, // Close at 50% of max profit (standard rule)
   });
 
@@ -186,12 +239,12 @@ class SpxPosition extends Equatable {
   double get totalCost => entryPremium * contracts * 100;
 
   /// Current unrealized P&L in dollars.
-  double get unrealizedPnL =>
-      (currentPremium - entryPremium) * contracts * 100;
+  double get unrealizedPnL => (currentPremium - entryPremium) * contracts * 100;
 
   /// P&L as a percentage of entry cost.
-  double get pnlPercent =>
-      entryPremium > 0 ? ((currentPremium - entryPremium) / entryPremium) * 100 : 0;
+  double get pnlPercent => entryPremium > 0
+      ? ((currentPremium - entryPremium) / entryPremium) * 100
+      : 0;
 
   bool get isProfit => unrealizedPnL >= 0;
 
@@ -266,9 +319,7 @@ class GexData extends Equatable {
   /// The strike with the largest positive GEX — acts as a price magnet.
   double? get gammaWall {
     if (gexByStrike.isEmpty) return null;
-    return gexByStrike.entries
-        .reduce((a, b) => a.value > b.value ? a : b)
-        .key;
+    return gexByStrike.entries.reduce((a, b) => a.value > b.value ? a : b).key;
   }
 
   /// The strike below spot where dealer put-selling creates a support floor.

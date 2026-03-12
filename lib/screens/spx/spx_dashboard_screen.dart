@@ -55,9 +55,7 @@ class _PnLSection extends StatelessWidget {
         children: [
           Text('SPX Options Performance',
               style: GoogleFonts.spaceGrotesk(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  letterSpacing: 1.5)),
+                  fontSize: 10, color: AppTheme.textMuted, letterSpacing: 1.5)),
           const SizedBox(height: 8),
           _DashboardMarketChip(isOpen: state.isMarketOpen),
           const SizedBox(height: 16),
@@ -78,8 +76,7 @@ class _PnLSection extends StatelessWidget {
               _PnLChip(
                 label: 'Unrealized',
                 value: '\$${state.unrealizedPnL.toStringAsFixed(2)}',
-                color:
-                    state.unrealizedPnL >= 0 ? AppTheme.green : AppTheme.red,
+                color: state.unrealizedPnL >= 0 ? AppTheme.green : AppTheme.red,
               ),
             ],
           ),
@@ -123,7 +120,8 @@ class _PnLChip extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _PnLChip({required this.label, required this.value, required this.color});
+  const _PnLChip(
+      {required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -217,9 +215,8 @@ class _GexPanel extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: gex.isPositiveGex
-                        ? AppTheme.greenBg
-                        : AppTheme.redBg,
+                    color:
+                        gex.isPositiveGex ? AppTheme.greenBg : AppTheme.redBg,
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Text(
@@ -227,8 +224,7 @@ class _GexPanel extends StatelessWidget {
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 8,
                       fontWeight: FontWeight.w700,
-                      color:
-                          gex.isPositiveGex ? AppTheme.green : AppTheme.red,
+                      color: gex.isPositiveGex ? AppTheme.green : AppTheme.red,
                     ),
                   ),
                 ),
@@ -246,8 +242,7 @@ class _GexPanel extends StatelessWidget {
                   label: 'Net GEX',
                   value:
                       '${gex.netGex >= 0 ? '+' : ''}${gex.netGex.toStringAsFixed(2)}B',
-                  color:
-                      gex.isPositiveGex ? AppTheme.green : AppTheme.red,
+                  color: gex.isPositiveGex ? AppTheme.green : AppTheme.red,
                 ),
                 _GexCell(
                   label: 'SPX Spot',
@@ -272,9 +267,7 @@ class _GexPanel extends StatelessWidget {
                   ? 'Dealers long gamma → price pinning expected near gamma wall.'
                   : 'Dealers short gamma → momentum amplification likely.',
               style: GoogleFonts.spaceGrotesk(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  height: 1.4),
+                  fontSize: 10, color: AppTheme.textMuted, height: 1.4),
             ),
           ],
         ],
@@ -287,7 +280,8 @@ class _GexCell extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _GexCell({required this.label, required this.value, required this.color});
+  const _GexCell(
+      {required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -326,7 +320,8 @@ class _StrategyPanel extends StatelessWidget {
         ),
         child: Text(
           'Building strategy signals…',
-          style: GoogleFonts.spaceGrotesk(fontSize: 12, color: AppTheme.textDim),
+          style:
+              GoogleFonts.spaceGrotesk(fontSize: 12, color: AppTheme.textDim),
         ),
       );
     }
@@ -360,8 +355,7 @@ class _StrategyPanel extends StatelessWidget {
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: actionColor.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(4),
@@ -387,7 +381,9 @@ class _StrategyPanel extends StatelessWidget {
               _StrategyMiniChip(
                 label: 'Gap',
                 value: '${strategy.gapPercent.toStringAsFixed(2)}%',
-                color: strategy.significantGap ? AppTheme.gold : AppTheme.textMuted,
+                color: strategy.significantGap
+                    ? AppTheme.gold
+                    : AppTheme.textMuted,
               ),
               _StrategyMiniChip(
                 label: 'S-Time',
@@ -597,7 +593,10 @@ class _ScannerSignals extends StatelessWidget {
                       fontSize: 12, color: AppTheme.textDim)),
             )
           else
-            ...signals.map((c) => _SignalTile(contract: c)),
+            ...signals.map((c) => _SignalTile(
+                  contract: c,
+                  spot: state.spotPrice,
+                )),
         ],
       ),
     );
@@ -606,11 +605,22 @@ class _ScannerSignals extends StatelessWidget {
 
 class _SignalTile extends StatelessWidget {
   final OptionsContract contract;
-  const _SignalTile({required this.contract});
+  final double spot;
+
+  const _SignalTile({
+    required this.contract,
+    required this.spot,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isCall = contract.side == OptionsSide.call;
+    final moneyness = contract.moneynessForSpot(spot);
+    final (moneynessLabel, moneynessColor) = switch (moneyness) {
+      SpxContractMoneyness.itm => ('ITM', AppTheme.blue),
+      SpxContractMoneyness.atm => ('ATM', AppTheme.gold),
+      SpxContractMoneyness.otm => ('OTM', AppTheme.textMuted),
+    };
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -632,6 +642,24 @@ class _SignalTile extends StatelessWidget {
           Text('\$${contract.strike.toStringAsFixed(0)}',
               style: GoogleFonts.spaceGrotesk(
                   fontSize: 12, color: AppTheme.textPrimary)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: moneynessColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: moneynessColor.withValues(alpha: 0.28)),
+            ),
+            child: Text(
+              moneynessLabel,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 8,
+                fontWeight: FontWeight.w700,
+                color: moneynessColor,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
           const Spacer(),
           Text('Δ ${contract.greeks.delta.toStringAsFixed(2)}',
               style: GoogleFonts.spaceGrotesk(
@@ -709,8 +737,7 @@ class _ScannerToggle extends StatelessWidget {
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color:
-                          isActive ? AppTheme.green : AppTheme.textMuted,
+                      color: isActive ? AppTheme.green : AppTheme.textMuted,
                       letterSpacing: 0.5,
                     ),
                   ),
@@ -742,8 +769,7 @@ class _SpxRiskNotice extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF0A0500),
-        border:
-            Border.all(color: AppTheme.gold.withValues(alpha: 0.25)),
+        border: Border.all(color: AppTheme.gold.withValues(alpha: 0.25)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(

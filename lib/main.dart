@@ -29,12 +29,12 @@ import 'services/wallet_repository.dart';
 import 'services/firebase_auth_repository.dart';
 import 'services/spx/spx_opportunity_journal_repository.dart';
 import 'services/spx/spx_trade_journal_repository.dart';
+import 'services/spx/spx_tradier_secure_storage.dart';
 import 'theme/app_theme.dart';
 
 const _secureStorage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
-const _tradierTokenKey = 'tradier_api_token';
 const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 Future<void> main() async {
@@ -172,39 +172,30 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
       userId: widget.user.id,
       journalRepository: _spxJournalRepository,
       opportunityJournalRepository: _spxOpportunityRepository,
-    )..add(const InitializeSpx());
-    _applySavedTradierToken();
-    _applySavedRobinhoodToken();
-    _loadAlertPreferences();
+    );
+    _bootstrapTradingState();
   }
 
-  Future<void> _applySavedTradierToken() async {
-    final token =
-        (await _secureStorage.read(key: _tradierTokenKey) ?? '').trim();
-    if (token.isEmpty) {
-      if (kDebugMode) {
-        debugPrint('[SPX-LIVE] No saved Tradier token found in secure storage');
-      }
-      return;
-    }
-    if (kDebugMode) {
-      debugPrint(
-          '[SPX-LIVE] Loaded saved Tradier token (length=${token.length})');
-    }
-    try {
-      _spxBloc.add(UpdateTradierToken(token));
-    } catch (_) {}
-  }
-
-  Future<void> _loadAlertPreferences() async {
+  Future<void> _bootstrapTradingState() async {
+    var didQueueSpxInit = false;
     final settings =
         await context.read<AppSettingsRepository>().load(widget.user.id);
+    final tradierEnvironment = SpxTradierEnvironment.normalize(
+      settings.spxTradierEnvironment,
+    );
+    final tradierToken = await readTradierTokenForEnvironment(
+      _secureStorage,
+      environment: tradierEnvironment,
+    );
+    final robinhoodToken =
+        (await _secureStorage.read(key: _robinhoodTokenKey) ?? '').trim();
     if (!mounted) return;
     try {
       _cryptoBloc.add(UpdateAlertPreferences(
         alertsEnabled: settings.alertsEnabled,
         hapticsEnabled: settings.hapticsEnabled,
       ));
+      _cryptoBloc.add(UpdateRobinhoodToken(robinhoodToken));
       final cryptoProvider = settings.cryptoDataProvider == 'robinhood'
           ? CryptoDataProvider.robinhood
           : CryptoDataProvider.binance;
@@ -218,6 +209,9 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         minDte: settings.spxMinDte,
         maxDte: settings.spxMaxDte,
       )));
+      _spxBloc.add(
+        UpdateSpxContractTargeting(settings.spxContractTargetingMode),
+      );
       _spxBloc.add(UpdateSpxExecutionSettings(
         executionMode: settings.spxOpportunityExecutionMode,
         entryDelaySeconds: settings.spxEntryDelaySeconds,
@@ -225,6 +219,11 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         maxSlippagePct: settings.spxMaxSlippagePct,
         notificationsEnabled: settings.alertsEnabled,
       ));
+      _spxBloc.add(UpdateTradierCredentials(
+        token: tradierToken,
+        environment: tradierEnvironment,
+      ));
+      didQueueSpxInit = true;
       unawaited(
         RemotePushService.instance.configure(
           userId: widget.user.id,
@@ -233,15 +232,13 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
       );
     } catch (_) {
       // BLoC may have closed before async completed.
+    } finally {
+      if (!didQueueSpxInit && mounted) {
+        try {
+          _spxBloc.add(const InitializeSpx());
+        } catch (_) {}
+      }
     }
-  }
-
-  Future<void> _applySavedRobinhoodToken() async {
-    final token =
-        (await _secureStorage.read(key: _robinhoodTokenKey) ?? '').trim();
-    try {
-      _cryptoBloc.add(UpdateRobinhoodToken(token));
-    } catch (_) {}
   }
 
   @override

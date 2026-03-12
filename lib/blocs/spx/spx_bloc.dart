@@ -17,6 +17,109 @@ part 'spx_state.dart';
 
 const _uuid = Uuid();
 
+typedef SpxOptionsServiceBuilder = SpxOptionsService Function({
+  String? apiToken,
+  required String tradierEnvironment,
+});
+
+SpxOptionsService _buildSpxOptionsService({
+  String? apiToken,
+  required String tradierEnvironment,
+}) {
+  return SpxOptionsService(
+    apiToken: apiToken,
+    useSandbox: SpxTradierEnvironment.isSandbox(tradierEnvironment),
+    enforceMarketHours: false,
+  );
+}
+
+List<OptionsContract> orderSpxContractsForTargeting(
+  Iterable<OptionsContract> contracts, {
+  required double spot,
+  required String targetingMode,
+}) {
+  final normalizedMode = SpxContractTargetingMode.normalize(targetingMode);
+  final sorted = contracts.toList()
+    ..sort((a, b) {
+      final rankCompare = _targetingRank(a, spot, normalizedMode)
+          .compareTo(_targetingRank(b, spot, normalizedMode));
+      if (rankCompare != 0) return rankCompare;
+
+      final distanceCompare = a
+          .strikeDistanceFromSpot(spot)
+          .compareTo(b.strikeDistanceFromSpot(spot));
+      if (distanceCompare != 0) return distanceCompare;
+
+      final deltaCompare =
+          _deltaDistanceFromTarget(a).compareTo(_deltaDistanceFromTarget(b));
+      if (deltaCompare != 0) return deltaCompare;
+
+      final volumeCompare = b.volume.compareTo(a.volume);
+      if (volumeCompare != 0) return volumeCompare;
+
+      final oiCompare = b.openInterest.compareTo(a.openInterest);
+      if (oiCompare != 0) return oiCompare;
+
+      return a.symbol.compareTo(b.symbol);
+    });
+  return sorted;
+}
+
+List<OptionsContract> matchingSpxContractsForTargeting(
+  Iterable<OptionsContract> contracts, {
+  required double spot,
+  required String targetingMode,
+}) {
+  final normalizedMode = SpxContractTargetingMode.normalize(targetingMode);
+  return contracts
+      .where(
+          (contract) => _matchesTargetingMode(contract, spot, normalizedMode))
+      .toList();
+}
+
+bool _matchesTargetingMode(
+  OptionsContract contract,
+  double spot,
+  String targetingMode,
+) {
+  final moneyness = contract.moneynessForSpot(spot);
+  return switch (SpxContractTargetingMode.normalize(targetingMode)) {
+    SpxContractTargetingMode.atm => moneyness == SpxContractMoneyness.atm,
+    SpxContractTargetingMode.nearItm => contract.isNearItmForSpot(spot),
+    SpxContractTargetingMode.nearOtm => contract.isNearOtmForSpot(spot),
+    SpxContractTargetingMode.atmOrNearItm =>
+      moneyness == SpxContractMoneyness.atm || contract.isNearItmForSpot(spot),
+    _ => contract.isTargetDelta,
+  };
+}
+
+int _targetingRank(
+  OptionsContract contract,
+  double spot,
+  String targetingMode,
+) {
+  final moneyness = contract.moneynessForSpot(spot);
+  return switch (SpxContractTargetingMode.normalize(targetingMode)) {
+    SpxContractTargetingMode.atm =>
+      moneyness == SpxContractMoneyness.atm ? 0 : 1,
+    SpxContractTargetingMode.nearItm => contract.isNearItmForSpot(spot)
+        ? 0
+        : (moneyness == SpxContractMoneyness.atm ? 1 : 2),
+    SpxContractTargetingMode.nearOtm => contract.isNearOtmForSpot(spot)
+        ? 0
+        : (moneyness == SpxContractMoneyness.atm ? 1 : 2),
+    SpxContractTargetingMode.atmOrNearItm =>
+      moneyness == SpxContractMoneyness.atm
+          ? 0
+          : (contract.isNearItmForSpot(spot) ? 1 : 2),
+    _ => contract.isTargetDelta ? 0 : 1,
+  };
+}
+
+double _deltaDistanceFromTarget(OptionsContract contract) {
+  return (contract.greeks.delta.abs() - 0.33).abs();
+}
+
 class SpxBloc extends Bloc<SpxEvent, SpxState> {
   static const int _maxAutoPositions = 6;
   static const double _maxAutoPerTradeNotional = 2500; // premium dollars
@@ -51,6 +154,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       <String, Future<void>>{};
   final bool _autoTickEnabled;
   final SpxStrategyActionType? _scannerOverrideAction;
+  final SpxOptionsServiceBuilder _optionsServiceBuilder;
 
   SpxOptionsService _service;
   final SpxOptionsSimulator _sim = SpxOptionsSimulator();
@@ -64,27 +168,31 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
   SpxBloc({
     String? tradierToken,
+    String tradierEnvironment = SpxTradierEnvironment.production,
     required String userId,
     SpxTradeJournalRepository? journalRepository,
     SpxOpportunityJournalRepository? opportunityJournalRepository,
     SpxOptionsService? optionsService,
+    SpxOptionsServiceBuilder? optionsServiceBuilder,
     bool autoTickEnabled = true,
     SpxStrategyActionType? scannerOverrideAction,
-  })  : _service = SpxOptionsService(
-          apiToken: tradierToken,
-          useSandbox: false,
-          enforceMarketHours: false,
-        ),
+  })  : _optionsServiceBuilder =
+            optionsServiceBuilder ?? _buildSpxOptionsService,
+        _service = optionsService ??
+            (optionsServiceBuilder ?? _buildSpxOptionsService)(
+              apiToken: tradierToken,
+              tradierEnvironment: tradierEnvironment,
+            ),
         _journal = journalRepository ?? FirebaseSpxTradeJournalRepository(),
         _opportunities = opportunityJournalRepository ??
             FirebaseSpxOpportunityJournalRepository(),
         _userId = userId,
         _autoTickEnabled = autoTickEnabled,
         _scannerOverrideAction = scannerOverrideAction,
-        super(SpxState.initial()) {
-    if (optionsService != null) {
-      _service = optionsService;
-    }
+        super(SpxState.initial(
+          tradierToken: tradierToken,
+          tradierEnvironment: tradierEnvironment,
+        )) {
     on<InitializeSpx>(_onInitialize);
     on<SpxMarketTick>(_onMarketTick);
     on<RefreshSpxChain>(_onRefreshChain);
@@ -96,8 +204,9 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     on<CancelSpxOpportunity>(_onCancelOpportunity);
     on<CloseSpxPosition>(_onClose);
     on<ToggleSpxScanner>(_onToggleScanner);
-    on<UpdateTradierToken>(_onUpdateToken);
+    on<UpdateTradierCredentials>(_onUpdateTradierCredentials);
     on<UpdateSpxExecutionSettings>(_onUpdateExecutionSettings);
+    on<UpdateSpxContractTargeting>(_onUpdateContractTargeting);
     on<UpdateSpxTermFilter>(_onUpdateTermFilter);
     on<ResetSpxDay>(_onResetDay);
     on<_ExecutePendingOpportunity>(_onExecutePendingOpportunity);
@@ -162,8 +271,9 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
     _addLog(
       _service.isLive
-          ? '📡 Connected to Tradier live feed'
-          : '📡 Running in simulation mode (set Tradier token in Settings)',
+          ? '📡 Connected to Tradier ${state.tradierEnvironmentLabel} feed'
+          : '📡 Running in simulation mode '
+              '(set Tradier ${state.tradierEnvironmentLabel} token in Settings)',
       TradeLogType.system,
     );
     _addLog(
@@ -299,6 +409,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         final (newPositions, newRealized, newTotal, newWins) = _runScanner(
           surviving,
           state.chain,
+          spot,
           realizedPnL,
           totalTrades,
           winTrades,
@@ -712,18 +823,40 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     );
   }
 
-  Future<void> _onUpdateToken(
-    UpdateTradierToken event,
+  void _onUpdateContractTargeting(
+    UpdateSpxContractTargeting event,
+    Emitter<SpxState> emit,
+  ) {
+    final nextMode = SpxContractTargetingMode.normalize(event.mode);
+    if (nextMode == state.contractTargetingMode) return;
+    emit(state.copyWith(contractTargetingMode: nextMode));
+    _addLog(
+      '🎯 SPX contract targeting updated: '
+      '${SpxContractTargetingMode.label(nextMode)}',
+      TradeLogType.info,
+    );
+  }
+
+  Future<void> _onUpdateTradierCredentials(
+    UpdateTradierCredentials event,
     Emitter<SpxState> emit,
   ) async {
-    _service = SpxOptionsService(
-      apiToken: event.token,
-      useSandbox: false,
-      enforceMarketHours: false,
+    final environment = SpxTradierEnvironment.normalize(event.environment);
+    final token = event.token.trim();
+    _service = _optionsServiceBuilder(
+      apiToken: token,
+      tradierEnvironment: environment,
     );
-    emit(state.copyWith(tradierToken: event.token));
+    emit(state.copyWith(
+      tradierToken: token,
+      tradierEnvironment: environment,
+    ));
     _addLog(
-        '🔑 Tradier token updated — retrying live feed', TradeLogType.system);
+      token.isEmpty
+          ? '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token cleared — using simulator'
+          : '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token updated — retrying live feed',
+      TradeLogType.system,
+    );
     add(const InitializeSpx());
   }
 
@@ -936,6 +1069,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
   (List<SpxPosition>, double, int, int) _runScanner(
     List<SpxPosition> current,
     List<OptionsContract> chain,
+    double spot,
     double realizedPnL,
     int totalTrades,
     int winTrades,
@@ -951,14 +1085,29 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     final requiredSide = action == SpxStrategyActionType.goLong
         ? OptionsSide.call
         : OptionsSide.put;
+    final eligibleContracts = chain
+        .where((contract) =>
+            contract.signal == SpxSignalType.buy &&
+            contract.side == requiredSide)
+        .toList();
+    final targetedContracts = matchingSpxContractsForTargeting(
+      eligibleContracts,
+      spot: spot,
+      targetingMode: state.contractTargetingMode,
+    );
+    final orderedContracts = orderSpxContractsForTargeting(
+      targetedContracts.isNotEmpty ? targetedContracts : eligibleContracts,
+      spot: spot,
+      targetingMode: targetedContracts.isNotEmpty
+          ? state.contractTargetingMode
+          : SpxContractTargetingMode.deltaZone,
+    );
     var totalNotional = positions.fold<double>(
       0,
       (sum, p) => sum + (p.currentPremium * p.contracts * 100),
     );
 
-    for (final contract in chain) {
-      if (contract.signal != SpxSignalType.buy) continue;
-      if (contract.side != requiredSide) continue;
+    for (final contract in orderedContracts) {
       final activeOpportunitySlots =
           positions.length + _pendingOpportunityBySymbol.length;
       if (activeOpportunitySlots >= _maxAutoPositions) break;

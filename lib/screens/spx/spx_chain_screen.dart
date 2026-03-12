@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import '../../blocs/spx/spx_bloc.dart';
 import '../../models/spx_models.dart';
+import '../../services/app_settings_repository.dart';
 import '../../theme/app_theme.dart';
 import 'spx_greeks_panel.dart';
 
@@ -144,7 +145,8 @@ class _SpotGexBar extends StatelessWidget {
           if (gex != null) ...[
             _InfoChip(
               label: 'Net GEX',
-              value: '${gex.netGex >= 0 ? '+' : ''}${gex.netGex.toStringAsFixed(2)}B',
+              value:
+                  '${gex.netGex >= 0 ? '+' : ''}${gex.netGex.toStringAsFixed(2)}B',
               color: gex.isPositiveGex ? AppTheme.green : AppTheme.red,
             ),
             const SizedBox(width: 16),
@@ -163,7 +165,10 @@ class _SpotGexBar extends StatelessWidget {
           const Spacer(),
           _MarketChip(isOpen: state.isMarketOpen),
           const SizedBox(width: 6),
-          _ModeChip(mode: state.dataMode),
+          _ModeChip(
+            mode: state.dataMode,
+            tradierEnvironment: state.tradierEnvironment,
+          ),
         ],
       ),
     );
@@ -174,7 +179,8 @@ class _InfoChip extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _InfoChip({required this.label, required this.value, required this.color});
+  const _InfoChip(
+      {required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -195,11 +201,21 @@ class _InfoChip extends StatelessWidget {
 
 class _ModeChip extends StatelessWidget {
   final SpxDataMode mode;
-  const _ModeChip({required this.mode});
+  final String tradierEnvironment;
+
+  const _ModeChip({
+    required this.mode,
+    required this.tradierEnvironment,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isLive = mode == SpxDataMode.live;
+    final label = !isLive
+        ? 'SIM'
+        : (SpxTradierEnvironment.isSandbox(tradierEnvironment)
+            ? 'SBX'
+            : 'LIVE');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
@@ -212,7 +228,7 @@ class _ModeChip extends StatelessWidget {
         ),
       ),
       child: Text(
-        isLive ? 'LIVE' : 'SIM',
+        label,
         style: GoogleFonts.spaceGrotesk(
           fontSize: 9,
           fontWeight: FontWeight.w700,
@@ -292,10 +308,11 @@ class _ContractTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCall = contract.side == OptionsSide.call;
-    final isAtm  = (contract.strike - spot).abs() <= 5;
+    final moneyness = contract.moneynessForSpot(spot);
+    final isAtm = moneyness == SpxContractMoneyness.atm;
     final signalColor = switch (contract.signal) {
-      SpxSignalType.buy   => AppTheme.green,
-      SpxSignalType.sell  => AppTheme.red,
+      SpxSignalType.buy => AppTheme.green,
+      SpxSignalType.sell => AppTheme.red,
       SpxSignalType.watch => AppTheme.textMuted,
     };
 
@@ -326,8 +343,7 @@ class _ContractTile extends StatelessWidget {
         child: Column(
           children: [
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
                   // Side badge
@@ -359,15 +375,8 @@ class _ContractTile extends StatelessWidget {
                       color: isAtm ? AppTheme.gold : AppTheme.textPrimary,
                     ),
                   ),
-                  if (isAtm)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: Text('ATM',
-                          style: GoogleFonts.spaceGrotesk(
-                              fontSize: 8,
-                              color: AppTheme.gold,
-                              fontWeight: FontWeight.w700)),
-                    ),
+                  const SizedBox(width: 6),
+                  _MoneynessBadge(moneyness: moneyness),
                   const Spacer(),
                   // Mid price
                   Text(
@@ -382,14 +391,18 @@ class _ContractTile extends StatelessWidget {
                   _MetaTag(
                     label: 'Δ',
                     value: contract.greeks.delta.toStringAsFixed(2),
-                    color: contract.isTargetDelta ? AppTheme.blue : AppTheme.textMuted,
+                    color: contract.isTargetDelta
+                        ? AppTheme.blue
+                        : AppTheme.textMuted,
                   ),
                   const SizedBox(width: 6),
                   // DTE
                   _MetaTag(
                     label: 'DTE',
                     value: '${contract.daysToExpiry}',
-                    color: contract.isDteWarning ? AppTheme.red : AppTheme.textMuted,
+                    color: contract.isDteWarning
+                        ? AppTheme.red
+                        : AppTheme.textMuted,
                   ),
                   const SizedBox(width: 6),
                   // Signal dot
@@ -429,11 +442,44 @@ class _ContractTile extends StatelessWidget {
   }
 }
 
+class _MoneynessBadge extends StatelessWidget {
+  final SpxContractMoneyness moneyness;
+
+  const _MoneynessBadge({required this.moneyness});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (moneyness) {
+      SpxContractMoneyness.itm => ('ITM', AppTheme.blue),
+      SpxContractMoneyness.atm => ('ATM', AppTheme.gold),
+      SpxContractMoneyness.otm => ('OTM', AppTheme.textMuted),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 8,
+          fontWeight: FontWeight.w700,
+          color: color,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
 class _MetaTag extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _MetaTag({required this.label, required this.value, required this.color});
+  const _MetaTag(
+      {required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -441,8 +487,8 @@ class _MetaTag extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text('$label ',
-            style: GoogleFonts.spaceGrotesk(
-                fontSize: 9, color: AppTheme.textDim)),
+            style:
+                GoogleFonts.spaceGrotesk(fontSize: 9, color: AppTheme.textDim)),
         Text(value,
             style: GoogleFonts.spaceGrotesk(
                 fontSize: 9, fontWeight: FontWeight.w700, color: color)),
@@ -485,8 +531,8 @@ class _BidAskCell extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: GoogleFonts.spaceGrotesk(
-                fontSize: 8, color: AppTheme.textDim)),
+            style:
+                GoogleFonts.spaceGrotesk(fontSize: 8, color: AppTheme.textDim)),
         Text(value,
             style: GoogleFonts.spaceGrotesk(
                 fontSize: 11, color: AppTheme.textPrimary)),

@@ -12,12 +12,12 @@ import '../models/crypto_models.dart';
 import '../services/auth_repository.dart';
 import '../services/app_settings_repository.dart';
 import '../services/remote_push_service.dart';
+import '../services/spx/spx_tradier_secure_storage.dart';
 import '../theme/app_theme.dart';
 
 const _storage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
-const _tradierTokenKey = 'tradier_api_token';
 const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 class SettingsScreen extends StatefulWidget {
@@ -42,6 +42,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _robinhoodTokenObscured = true;
   bool _robinhoodTokenSaving = false;
   CryptoDataProvider _cryptoDataProvider = CryptoDataProvider.binance;
+  String _spxTradierEnvironment = SpxTradierEnvironment.production;
+  String _spxContractTargetingMode = SpxContractTargetingMode.deltaZone;
   SpxTermMode _spxTermMode = SpxTermMode.exact;
   int _spxExactDte = 7;
   int _spxMinDte = 5;
@@ -59,41 +61,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {
       _tradingBloc = null;
     }
-    _loadPrefs();
-    _loadToken();
-    _loadRobinhoodToken();
+    _loadSettingsData();
   }
 
-  Future<void> _loadToken() async {
-    final token = await _storage.read(key: _tradierTokenKey);
+  Future<void> _loadSettingsData() async {
+    final authState = context.read<AuthBloc>().state;
+    final settingsRepository = context.read<AppSettingsRepository>();
+    final user = authState.user;
+    final robinhoodToken =
+        (await _storage.read(key: _robinhoodTokenKey) ?? '').trim();
+    if (user == null) {
+      if (!mounted) return;
+      setState(() {
+        _robinhoodTokenController.text = robinhoodToken;
+        _loadingPrefs = false;
+      });
+      return;
+    }
+    final settings = await settingsRepository.load(user.id);
+    final tradierEnvironment = SpxTradierEnvironment.normalize(
+      settings.spxTradierEnvironment,
+    );
+    final tradierToken = await readTradierTokenForEnvironment(
+      _storage,
+      environment: tradierEnvironment,
+    );
     if (!mounted) return;
-    final normalized = (token ?? '').trim();
-    setState(() => _tokenController.text = normalized);
-    if (normalized.isEmpty) return;
-    try {
-      context.read<SpxBloc>().add(UpdateTradierToken(normalized));
-    } catch (_) {}
+    setState(() {
+      _alertsEnabled = settings.alertsEnabled;
+      _hapticsEnabled = settings.hapticsEnabled;
+      _cryptoDataProvider = settings.cryptoDataProvider == 'robinhood'
+          ? CryptoDataProvider.robinhood
+          : CryptoDataProvider.binance;
+      _spxTradierEnvironment = tradierEnvironment;
+      _spxContractTargetingMode = SpxContractTargetingMode.normalize(
+        settings.spxContractTargetingMode,
+      );
+      _spxTermMode = settings.spxTermMode == 'range'
+          ? SpxTermMode.range
+          : SpxTermMode.exact;
+      _spxExactDte = settings.spxExactDte;
+      _spxMinDte = settings.spxMinDte;
+      _spxMaxDte = settings.spxMaxDte < settings.spxMinDte
+          ? settings.spxMinDte
+          : settings.spxMaxDte;
+      _spxExecutionMode = SpxOpportunityExecutionMode.normalize(
+        settings.spxOpportunityExecutionMode,
+      );
+      _spxEntryDelaySeconds =
+          settings.spxEntryDelaySeconds.clamp(0, 3600).toInt();
+      _spxValidationWindowSeconds =
+          settings.spxValidationWindowSeconds.clamp(15, 3600).toInt();
+      _spxMaxSlippagePct =
+          settings.spxMaxSlippagePct.clamp(0.1, 100.0).toDouble();
+      _tokenController.text = tradierToken;
+      _robinhoodTokenController.text = robinhoodToken;
+      _loadingPrefs = false;
+    });
+    _tradingBloc?.add(
+      UpdateAlertPreferences(
+        alertsEnabled: _alertsEnabled,
+        hapticsEnabled: _hapticsEnabled,
+      ),
+    );
+    _tradingBloc?.add(UpdateCryptoDataProvider(_cryptoDataProvider));
+    _pushSpxContractTargeting();
+    _pushSpxExecutionSettings();
   }
 
   Future<void> _saveToken() async {
     final token = _tokenController.text.trim();
     setState(() => _tokenSaving = true);
     try {
-      if (token.isEmpty) {
-        await _storage.delete(key: _tradierTokenKey);
-      } else {
-        await _storage.write(key: _tradierTokenKey, value: token);
-      }
+      await writeTradierTokenForEnvironment(
+        _storage,
+        environment: _spxTradierEnvironment,
+        token: token,
+      );
       if (!mounted) return;
-      // Hot-swap token in SpxBloc so the live feed retries immediately
       try {
-        context.read<SpxBloc>().add(UpdateTradierToken(token));
+        context.read<SpxBloc>().add(UpdateTradierCredentials(
+              token: token,
+              environment: _spxTradierEnvironment,
+            ));
       } catch (_) {}
+      final envLabel = SpxTradierEnvironment.label(_spxTradierEnvironment);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(token.isEmpty
-              ? 'Tradier token cleared — using simulator'
-              : 'Tradier token saved — retrying live feed'),
+              ? 'Tradier $envLabel token cleared — using simulator'
+              : 'Tradier $envLabel token saved — retrying live feed'),
           backgroundColor: AppTheme.blue.withValues(alpha: 0.9),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 2),
@@ -102,16 +159,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _tokenSaving = false);
     }
-  }
-
-  Future<void> _loadRobinhoodToken() async {
-    final token = await _storage.read(key: _robinhoodTokenKey);
-    if (!mounted) return;
-    final normalized = (token ?? '').trim();
-    setState(() => _robinhoodTokenController.text = normalized);
-    try {
-      context.read<CryptoBloc>().add(UpdateRobinhoodToken(normalized));
-    } catch (_) {}
   }
 
   Future<void> _saveRobinhoodToken() async {
@@ -149,51 +196,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  Future<void> _loadPrefs() async {
-    final authState = context.read<AuthBloc>().state;
-    final user = authState.user;
-    if (user == null) {
-      if (!mounted) return;
-      setState(() => _loadingPrefs = false);
-      return;
-    }
-    final settings = await context.read<AppSettingsRepository>().load(user.id);
-    if (!mounted) return;
-    setState(() {
-      _alertsEnabled = settings.alertsEnabled;
-      _hapticsEnabled = settings.hapticsEnabled;
-      _cryptoDataProvider = settings.cryptoDataProvider == 'robinhood'
-          ? CryptoDataProvider.robinhood
-          : CryptoDataProvider.binance;
-      _spxTermMode = settings.spxTermMode == 'range'
-          ? SpxTermMode.range
-          : SpxTermMode.exact;
-      _spxExactDte = settings.spxExactDte;
-      _spxMinDte = settings.spxMinDte;
-      _spxMaxDte = settings.spxMaxDte < settings.spxMinDte
-          ? settings.spxMinDte
-          : settings.spxMaxDte;
-      _spxExecutionMode = SpxOpportunityExecutionMode.normalize(
-        settings.spxOpportunityExecutionMode,
-      );
-      _spxEntryDelaySeconds =
-          settings.spxEntryDelaySeconds.clamp(0, 3600).toInt();
-      _spxValidationWindowSeconds =
-          settings.spxValidationWindowSeconds.clamp(15, 3600).toInt();
-      _spxMaxSlippagePct =
-          settings.spxMaxSlippagePct.clamp(0.1, 100.0).toDouble();
-      _loadingPrefs = false;
-    });
-    _tradingBloc?.add(
-      UpdateAlertPreferences(
-        alertsEnabled: _alertsEnabled,
-        hapticsEnabled: _hapticsEnabled,
-      ),
-    );
-    _tradingBloc?.add(UpdateCryptoDataProvider(_cryptoDataProvider));
-    _pushSpxExecutionSettings();
-  }
-
   Future<void> _persistPrefs() async {
     final user = context.read<AuthBloc>().state.user;
     if (user == null) return;
@@ -207,6 +209,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? 'robinhood'
                     : 'binance',
             spxTermMode: _spxTermMode == SpxTermMode.range ? 'range' : 'exact',
+            spxTradierEnvironment: _spxTradierEnvironment,
+            spxContractTargetingMode: _spxContractTargetingMode,
             spxExactDte: _spxExactDte,
             spxMinDte: _spxMinDte,
             spxMaxDte: _spxMaxDte,
@@ -224,6 +228,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context.read<CryptoBloc>().add(UpdateCryptoDataProvider(provider));
     } catch (_) {}
     _persistPrefs();
+  }
+
+  void _setSpxContractTargetingMode(String mode) {
+    final next = SpxContractTargetingMode.normalize(mode);
+    setState(() => _spxContractTargetingMode = next);
+    _pushSpxContractTargeting();
+    _persistPrefs();
+  }
+
+  Future<void> _setTradierEnvironment(String environment) async {
+    final next = SpxTradierEnvironment.normalize(environment);
+    if (next == _spxTradierEnvironment) return;
+    setState(() => _spxTradierEnvironment = next);
+    await _persistPrefs();
+    final token = await readTradierTokenForEnvironment(
+      _storage,
+      environment: next,
+    );
+    if (!mounted) return;
+    setState(() => _tokenController.text = token);
+    try {
+      context.read<SpxBloc>().add(UpdateTradierCredentials(
+            token: token,
+            environment: next,
+          ));
+    } catch (_) {}
   }
 
   void _pushSpxTermFilter() {
@@ -298,6 +328,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               maxSlippagePct: _spxMaxSlippagePct,
               notificationsEnabled: _alertsEnabled,
             ),
+          );
+    } catch (_) {}
+  }
+
+  void _pushSpxContractTargeting() {
+    try {
+      context.read<SpxBloc>().add(
+            UpdateSpxContractTargeting(_spxContractTargetingMode),
           );
     } catch (_) {}
   }
@@ -544,11 +582,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Enter your Tradier API token to enable live SPX options data. Leave blank to use the Black-Scholes simulator.',
+                        'Choose the Tradier environment, then save the matching token. Sandbox and production tokens are stored separately.',
                         style: GoogleFonts.spaceGrotesk(
                           color: AppTheme.textMuted,
                           fontSize: 11,
                           height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _SelectCard<String>(
+                        label: 'Environment',
+                        value: _spxTradierEnvironment,
+                        items: const [
+                          SpxTradierEnvironment.sandbox,
+                          SpxTradierEnvironment.production,
+                        ],
+                        itemLabel: (env) => SpxTradierEnvironment.label(env),
+                        onChanged: (env) {
+                          if (env == null) return;
+                          _setTradierEnvironment(env);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _spxTradierEnvironment == SpxTradierEnvironment.sandbox
+                            ? 'Testing endpoint: sandbox.tradier.com'
+                            : 'Live endpoint: api.tradier.com',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textDim,
+                          fontSize: 10,
+                          height: 1.4,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -605,7 +668,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Icon(Icons.save_outlined, size: 16),
-                          label: Text(_tokenSaving ? 'Saving…' : 'Save token'),
+                          label: Text(
+                            _tokenSaving
+                                ? 'Saving…'
+                                : 'Save ${SpxTradierEnvironment.label(_spxTradierEnvironment)} token',
+                          ),
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -616,7 +683,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           const SizedBox(width: 5),
                           Expanded(
                             child: Text(
-                              'Get a free token at tradier.com → API Access. Use sandbox for testing.',
+                              'Get a free token at tradier.com → API Access. Switch to Sandbox for paper testing before using Production.',
                               style: GoogleFonts.spaceGrotesk(
                                 color: AppTheme.textDim,
                                 fontSize: 10,
@@ -875,6 +942,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ],
                         ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _SectionCard(
+                  title: 'SPX Contract Targeting',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Choose which part of the chain the dashboard and auto-scanner should prefer first.',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _SelectCard<String>(
+                        label: 'Targeting',
+                        value: _spxContractTargetingMode,
+                        items: const [
+                          SpxContractTargetingMode.deltaZone,
+                          SpxContractTargetingMode.atm,
+                          SpxContractTargetingMode.nearItm,
+                          SpxContractTargetingMode.nearOtm,
+                          SpxContractTargetingMode.atmOrNearItm,
+                        ],
+                        itemLabel: (mode) =>
+                            SpxContractTargetingMode.label(mode),
+                        onChanged: (mode) {
+                          if (mode == null) return;
+                          _setSpxContractTargetingMode(mode);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _spxContractTargetingMode ==
+                                SpxContractTargetingMode.deltaZone
+                            ? 'Current behavior: prefer liquid contracts near the target delta range.'
+                            : _spxContractTargetingMode ==
+                                    SpxContractTargetingMode.atm
+                                ? 'Prefer the strike closest to spot price.'
+                                : _spxContractTargetingMode ==
+                                        SpxContractTargetingMode.nearItm
+                                    ? 'Prefer the first shallow in-the-money strikes.'
+                                    : _spxContractTargetingMode ==
+                                            SpxContractTargetingMode.nearOtm
+                                        ? 'Prefer the first shallow out-of-the-money strikes.'
+                                        : 'Prefer ATM first, then shallow ITM strikes.',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.textDim,
+                          fontSize: 10,
+                          height: 1.35,
+                        ),
+                      ),
                     ],
                   ),
                 ),
