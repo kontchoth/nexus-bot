@@ -4,6 +4,7 @@ import 'package:nexusbot/theme/google_fonts_stub.dart';
 import '../../blocs/spx/spx_bloc.dart';
 import '../../models/spx_models.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/number_formatters.dart';
 import 'spx_greeks_panel.dart';
 
 class SpxPositionsScreen extends StatelessWidget {
@@ -31,12 +32,12 @@ class _PositionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pnl      = position.unrealizedPnL;
-    final pnlPct   = position.pnlPercent;
+    final pnl = position.unrealizedPnL;
+    final pnlPct = position.pnlPercent;
     final isProfit = pnl >= 0;
     final pnlColor = isProfit ? AppTheme.green : AppTheme.red;
     final contract = position.contract;
-    final isCall   = contract.side == OptionsSide.call;
+    final isCall = contract.side == OptionsSide.call;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -58,7 +59,8 @@ class _PositionCard extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
                     color: (isCall ? AppTheme.green : AppTheme.red)
                         .withValues(alpha: 0.12),
@@ -76,7 +78,7 @@ class _PositionCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '\$${contract.strike.toStringAsFixed(0)}  ·  ${contract.daysToExpiry}DTE',
+                    '${NexusFormatters.usd(contract.strike, decimals: 0)}  ·  ${contract.daysToExpiry}DTE',
                     style: GoogleFonts.syne(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -89,7 +91,7 @@ class _PositionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '${isProfit ? '+' : ''}\$${pnl.toStringAsFixed(2)}',
+                      NexusFormatters.usd(pnl, signed: true),
                       style: GoogleFonts.syne(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
@@ -113,12 +115,12 @@ class _PositionCard extends StatelessWidget {
               children: [
                 _PremiumChip(
                   label: 'Entry',
-                  value: '\$${position.entryPremium.toStringAsFixed(2)}',
+                  value: NexusFormatters.usd(position.entryPremium),
                 ),
                 const SizedBox(width: 12),
                 _PremiumChip(
                   label: 'Current',
-                  value: '\$${position.currentPremium.toStringAsFixed(2)}',
+                  value: NexusFormatters.usd(position.currentPremium),
                   color: pnlColor,
                 ),
                 const SizedBox(width: 12),
@@ -129,7 +131,8 @@ class _PositionCard extends StatelessWidget {
                 const Spacer(),
                 if (position.isDteWarning)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: AppTheme.red.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(3),
@@ -164,9 +167,8 @@ class _PositionCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
             child: GestureDetector(
-              onTap: () => context
-                  .read<SpxBloc>()
-                  .add(CloseSpxPosition(position.id)),
+              onTap: () =>
+                  context.read<SpxBloc>().add(CloseSpxPosition(position.id)),
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -213,9 +215,7 @@ class _PremiumChip extends StatelessWidget {
                 fontSize: 8, color: AppTheme.textMuted)),
         Text(value,
             style: GoogleFonts.spaceGrotesk(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: color)),
+                fontSize: 11, fontWeight: FontWeight.w600, color: color)),
       ],
     );
   }

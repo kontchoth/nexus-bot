@@ -127,6 +127,8 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
   static const int _maxAutoPerSide = 4;
   static const int _maxAutoPerDteBucket = 2;
   static const Duration _maxExecutionQuoteAge = Duration(seconds: 90);
+  static const int _maxIntradaySpotSamples = 390;
+  static const int _maxIntradayMarkers = 24;
 
   Timer? _tickTimer;
   int _tickCount = 0;
@@ -135,9 +137,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
   DateTime? _sessionStartAt;
   double? _sessionOpenPrice;
   double? _sessionReferencePrice;
+  double? _sessionHighPrice;
+  double? _sessionLowPrice;
   double? _minute14High;
   double? _minute14Low;
   final List<double> _spotTape = <double>[];
+  final List<SpxSpotSample> _intradaySpots = <SpxSpotSample>[];
+  final List<SpxCandleSample> _intradayCandles = <SpxCandleSample>[];
+  final List<SpxIntradayMarker> _intradayMarkers = <SpxIntradayMarker>[];
   SpxStrategyActionType? _lastStrategyAction;
   String _executionMode = SpxOpportunityExecutionMode.manualConfirm;
   int _entryDelaySeconds = 30;
@@ -263,6 +270,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       selectedExpiration: selectedExp,
       spotPrice: spot,
       isMarketOpen: marketOpenNow,
+      intradaySpots: List<SpxSpotSample>.from(_intradaySpots),
+      intradayCandles: List<SpxCandleSample>.from(_intradayCandles),
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+      sessionStartedAt: _sessionStartAt,
+      sessionOpenPrice: _sessionOpenPrice,
+      sessionHighPrice: _sessionHighPrice,
+      sessionLowPrice: _sessionLowPrice,
       gexData: gexData,
       strategySnapshot: strategySnapshot,
       dataMode: mode,
@@ -343,6 +357,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             exitReasonText: 'Position hit stop-loss threshold.',
             pnlUsd: pnl,
           );
+          _recordIntradayMarker(
+            timestamp: DateTime.now(),
+            spot: spot,
+            type: SpxIntradayMarkerType.exit,
+            label: 'OUT',
+            symbol: pos.contract.symbol,
+            side: pos.contract.side,
+          );
           _addLog(
             '🛑 STOP-LOSS ${pos.contract.symbol} — PnL: \$${pnl.toStringAsFixed(2)}',
             TradeLogType.loss,
@@ -361,6 +383,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             exitReasonCode: SpxExitReasonCodes.takeProfit,
             exitReasonText: 'Position hit take-profit threshold.',
             pnlUsd: pnl,
+          );
+          _recordIntradayMarker(
+            timestamp: DateTime.now(),
+            spot: spot,
+            type: SpxIntradayMarkerType.exit,
+            label: 'OUT',
+            symbol: pos.contract.symbol,
+            side: pos.contract.side,
           );
           _addLog(
             '🎯 TAKE-PROFIT ${pos.contract.symbol} — PnL: +\$${pnl.toStringAsFixed(2)}',
@@ -381,6 +411,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             exitReasonCode: SpxExitReasonCodes.expired,
             exitReasonText: 'Contract reached expiry.',
             pnlUsd: pos.unrealizedPnL,
+          );
+          _recordIntradayMarker(
+            timestamp: DateTime.now(),
+            spot: spot,
+            type: SpxIntradayMarkerType.exit,
+            label: 'OUT',
+            symbol: pos.contract.symbol,
+            side: pos.contract.side,
           );
           _addLog(
             '⏱ EXPIRED ${pos.contract.symbol} — position closed at expiry',
@@ -427,6 +465,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         positions: surviving,
         spotPrice: spot,
         isMarketOpen: marketOpenNow,
+        intradaySpots: List<SpxSpotSample>.from(_intradaySpots),
+        intradayCandles: List<SpxCandleSample>.from(_intradayCandles),
+        intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+        sessionStartedAt: _sessionStartAt,
+        sessionOpenPrice: _sessionOpenPrice,
+        sessionHighPrice: _sessionHighPrice,
+        sessionLowPrice: _sessionLowPrice,
         gexData: gexData,
         strategySnapshot: strategySnapshot,
         realizedPnL: realizedPnL,
@@ -468,6 +513,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         chain: chain,
         spotPrice: spot,
         isMarketOpen: marketOpenNow,
+        intradaySpots: List<SpxSpotSample>.from(_intradaySpots),
+        intradayCandles: List<SpxCandleSample>.from(_intradayCandles),
+        intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+        sessionStartedAt: _sessionStartAt,
+        sessionOpenPrice: _sessionOpenPrice,
+        sessionHighPrice: _sessionHighPrice,
+        sessionLowPrice: _sessionLowPrice,
         gexData: gex,
         strategySnapshot: strategySnapshot,
         dataMode: mode,
@@ -497,6 +549,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       chain: chain,
       spotPrice: spot,
       isMarketOpen: marketOpenNow,
+      intradaySpots: List<SpxSpotSample>.from(_intradaySpots),
+      intradayCandles: List<SpxCandleSample>.from(_intradayCandles),
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+      sessionStartedAt: _sessionStartAt,
+      sessionOpenPrice: _sessionOpenPrice,
+      sessionHighPrice: _sessionHighPrice,
+      sessionLowPrice: _sessionLowPrice,
       gexData: gex,
       strategySnapshot: strategySnapshot,
     ));
@@ -537,6 +596,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       currentPremium: contract.midPrice,
       openedAt: DateTime.now(),
     );
+    _recordIntradayMarker(
+      timestamp: pos.openedAt,
+      spot: state.spotPrice,
+      type: SpxIntradayMarkerType.entry,
+      label: 'BUY',
+      symbol: contract.symbol,
+      side: contract.side,
+    );
 
     _addLog(
       '🟢 BUY ${event.contracts}× ${contract.symbol} @ \$${contract.midPrice.toStringAsFixed(2)}'
@@ -571,7 +638,10 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
           : _executionMode,
     );
 
-    emit(state.copyWith(positions: [...state.positions, pos]));
+    emit(state.copyWith(
+      positions: [...state.positions, pos],
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+    ));
   }
 
   void _onApproveOpportunity(
@@ -652,6 +722,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       currentPremium: contract.midPrice,
       openedAt: DateTime.now(),
     );
+    _recordIntradayMarker(
+      timestamp: pos.openedAt,
+      spot: state.spotPrice,
+      type: SpxIntradayMarkerType.entry,
+      label: 'BUY',
+      symbol: contract.symbol,
+      side: contract.side,
+    );
     _addLog(
       '✅ APPROVED ${contract.symbol} @ \$${contract.midPrice.toStringAsFixed(2)}',
       TradeLogType.buy,
@@ -669,7 +747,10 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       opportunityId: event.opportunityId,
       executionModeAtDecision: SpxOpportunityExecutionMode.manualConfirm,
     );
-    emit(state.copyWith(positions: [...state.positions, pos]));
+    emit(state.copyWith(
+      positions: [...state.positions, pos],
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+    ));
   }
 
   void _onRejectOpportunity(
@@ -791,6 +872,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       exitReasonText: 'Manual close from positions screen.',
       pnlUsd: pnl,
     );
+    _recordIntradayMarker(
+      timestamp: DateTime.now(),
+      spot: state.spotPrice,
+      type: SpxIntradayMarkerType.exit,
+      label: 'OUT',
+      symbol: pos.contract.symbol,
+      side: pos.contract.side,
+    );
     final sign = pnl >= 0 ? '+' : '';
     _addLog(
       '🔴 CLOSE ${pos.contract.symbol} — PnL: $sign\$${pnl.toStringAsFixed(2)}',
@@ -804,6 +893,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     emit(state.copyWith(
       positions:
           state.positions.where((p) => p.id != event.positionId).toList(),
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
       realizedPnL: state.realizedPnL + pnl,
       totalTrades: state.totalTrades + 1,
       winTrades: pnl > 0 ? state.winTrades + 1 : state.winTrades,
@@ -936,6 +1026,13 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       chain: chain,
       spotPrice: spot,
       isMarketOpen: marketOpenNow,
+      intradaySpots: List<SpxSpotSample>.from(_intradaySpots),
+      intradayCandles: List<SpxCandleSample>.from(_intradayCandles),
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+      sessionStartedAt: _sessionStartAt,
+      sessionOpenPrice: _sessionOpenPrice,
+      sessionHighPrice: _sessionHighPrice,
+      sessionLowPrice: _sessionLowPrice,
       gexData: gex,
       strategySnapshot: strategySnapshot,
       dataMode: mode,
@@ -1021,6 +1118,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       currentPremium: contract.midPrice,
       openedAt: DateTime.now(),
     );
+    _recordIntradayMarker(
+      timestamp: pos.openedAt,
+      spot: state.spotPrice,
+      type: SpxIntradayMarkerType.entry,
+      label: 'BUY',
+      symbol: contract.symbol,
+      side: contract.side,
+    );
     _addLog(
       '⏳ AUTO DELAY EXECUTED ${contract.symbol} '
       '@ \$${contract.midPrice.toStringAsFixed(2)}',
@@ -1039,7 +1144,10 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       opportunityId: event.opportunityId,
       executionModeAtDecision: SpxOpportunityExecutionMode.autoAfterDelay,
     );
-    emit(state.copyWith(positions: [...state.positions, pos]));
+    emit(state.copyWith(
+      positions: [...state.positions, pos],
+      intradayMarkers: List<SpxIntradayMarker>.from(_intradayMarkers),
+    ));
   }
 
   void _onExpirePendingOpportunity(
@@ -1124,7 +1232,16 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         continue;
       }
 
+      final markerTime = DateTime.now();
       final opportunityId = _uuid.v4();
+      _recordIntradayMarker(
+        timestamp: markerTime,
+        spot: spot,
+        type: SpxIntradayMarkerType.signal,
+        label: 'SIG',
+        symbol: contract.symbol,
+        side: contract.side,
+      );
       _recordOpportunityLifecycle(
         opportunityId: opportunityId,
         contract: contract,
@@ -1214,6 +1331,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         entryPremium: contract.midPrice,
         currentPremium: contract.midPrice,
         openedAt: DateTime.now(),
+      );
+      _recordIntradayMarker(
+        timestamp: pos.openedAt,
+        spot: spot,
+        type: SpxIntradayMarkerType.entry,
+        label: 'BUY',
+        symbol: contract.symbol,
+        side: contract.side,
       );
       positions.add(pos);
       totalNotional += orderNotional;
@@ -1417,23 +1542,52 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     _sessionStartAt = now;
     _sessionOpenPrice = spot;
     _sessionReferencePrice = spot;
+    _sessionHighPrice = spot;
+    _sessionLowPrice = spot;
     _minute14High = spot;
     _minute14Low = spot;
     _spotTape
       ..clear()
       ..add(spot);
+    _intradaySpots
+      ..clear()
+      ..add(SpxSpotSample(recordedAt: now, price: spot));
+    _intradayCandles
+      ..clear()
+      ..add(
+        SpxCandleSample(
+          bucketStart:
+              DateTime(now.year, now.month, now.day, now.hour, now.minute),
+          open: spot,
+          high: spot,
+          low: spot,
+          close: spot,
+        ),
+      );
+    _intradayMarkers.clear();
     _lastStrategyAction = null;
   }
 
   void _updateSessionTracking(double spot) {
     final now = DateTime.now();
+    if (_sessionStartAt != null && !_isSameCalendarDay(_sessionStartAt!, now)) {
+      _resetSessionTracking(spot);
+      return;
+    }
+
     _sessionStartAt ??= now;
     _sessionOpenPrice ??= spot;
     _sessionReferencePrice ??= _sessionOpenPrice;
+    _sessionHighPrice =
+        _sessionHighPrice == null ? spot : math.max(_sessionHighPrice!, spot);
+    _sessionLowPrice =
+        _sessionLowPrice == null ? spot : math.min(_sessionLowPrice!, spot);
     _spotTape.add(spot);
     if (_spotTape.length > 240) {
       _spotTape.removeRange(0, _spotTape.length - 240);
     }
+    _recordIntradaySpot(now, spot);
+    _recordIntradayCandle(now, spot);
 
     final minutesFromStart =
         now.difference(_sessionStartAt!).inMinutes.clamp(0, 390);
@@ -1449,6 +1603,107 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       _minute14Low =
           _minute14Low == null ? spot : math.min(_minute14Low!, spot);
     }
+  }
+
+  void _recordIntradaySpot(DateTime now, double spot) {
+    final sample = SpxSpotSample(recordedAt: now, price: spot);
+    if (_intradaySpots.isEmpty) {
+      _intradaySpots.add(sample);
+      return;
+    }
+
+    final last = _intradaySpots.last.recordedAt;
+    final sameMinuteBucket = _isSameMinute(last, now);
+    if (sameMinuteBucket) {
+      _intradaySpots[_intradaySpots.length - 1] = sample;
+      return;
+    }
+
+    _intradaySpots.add(sample);
+    if (_intradaySpots.length > _maxIntradaySpotSamples) {
+      _intradaySpots.removeRange(
+        0,
+        _intradaySpots.length - _maxIntradaySpotSamples,
+      );
+    }
+  }
+
+  void _recordIntradayCandle(DateTime now, double spot) {
+    final bucketStart = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      now.hour,
+      now.minute,
+    );
+    if (_intradayCandles.isEmpty) {
+      _intradayCandles.add(
+        SpxCandleSample(
+          bucketStart: bucketStart,
+          open: spot,
+          high: spot,
+          low: spot,
+          close: spot,
+        ),
+      );
+      return;
+    }
+
+    final last = _intradayCandles.last;
+    if (_isSameMinute(last.bucketStart, bucketStart)) {
+      _intradayCandles[_intradayCandles.length - 1] = last.update(spot);
+      return;
+    }
+
+    _intradayCandles.add(
+      SpxCandleSample(
+        bucketStart: bucketStart,
+        open: spot,
+        high: spot,
+        low: spot,
+        close: spot,
+      ),
+    );
+    if (_intradayCandles.length > _maxIntradaySpotSamples) {
+      _intradayCandles.removeRange(
+        0,
+        _intradayCandles.length - _maxIntradaySpotSamples,
+      );
+    }
+  }
+
+  void _recordIntradayMarker({
+    required DateTime timestamp,
+    required double spot,
+    required SpxIntradayMarkerType type,
+    required String label,
+    required String symbol,
+    OptionsSide? side,
+  }) {
+    _intradayMarkers.add(
+      SpxIntradayMarker(
+        timestamp: timestamp,
+        spotPrice: spot,
+        type: type,
+        label: label,
+        symbol: symbol,
+        side: side,
+      ),
+    );
+    if (_intradayMarkers.length > _maxIntradayMarkers) {
+      _intradayMarkers.removeRange(
+        0,
+        _intradayMarkers.length - _maxIntradayMarkers,
+      );
+    }
+  }
+
+  bool _isSameCalendarDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool _isSameMinute(DateTime a, DateTime b) {
+    return _isSameCalendarDay(a, b) && a.hour == b.hour && a.minute == b.minute;
   }
 
   SpxStrategySnapshot _buildStrategySnapshot({

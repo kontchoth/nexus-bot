@@ -173,6 +173,15 @@ void main() {
       expect(executed.executionModeAtDecision,
           SpxOpportunityExecutionMode.autoImmediate);
       expect(harness.bloc.state.positions, hasLength(1));
+      expect(
+        harness.bloc.state.intradayMarkers
+            .map((marker) => marker.type)
+            .toList(),
+        containsAllInOrder([
+          SpxIntradayMarkerType.signal,
+          SpxIntradayMarkerType.entry,
+        ]),
+      );
     });
 
     test('auto scanner honors near OTM targeting mode', () async {
@@ -241,6 +250,60 @@ void main() {
       await _waitFor(() => harness.bloc.state.positions.isNotEmpty);
 
       expect(harness.bloc.state.positions.single.contract.symbol, 'CALL-ITM');
+    });
+
+    test('market ticks update session levels and intraday spot series',
+        () async {
+      final bloc = SpxBloc(
+        userId: userId,
+        journalRepository: LocalSpxTradeJournalRepository(),
+        opportunityJournalRepository: LocalSpxOpportunityJournalRepository(),
+        autoTickEnabled: false,
+        optionsService: _SequenceSpotSpxOptionsService(
+          spots: const [5750.0, 5756.0, 5744.0],
+          contract: _buildTestCallContract(symbol: 'SPX-INTRADAY'),
+        ),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const InitializeSpx());
+      await _waitFor(() => bloc.state.chain.isNotEmpty);
+
+      expect(bloc.state.sessionOpenPrice, 5750.0);
+      expect(bloc.state.sessionHighPrice, 5750.0);
+      expect(bloc.state.sessionLowPrice, 5750.0);
+      expect(bloc.state.intradaySpots, hasLength(1));
+      expect(bloc.state.intradaySpots.single.price, 5750.0);
+      expect(bloc.state.intradayCandles, hasLength(1));
+      expect(bloc.state.intradayCandles.single.open, 5750.0);
+      expect(bloc.state.intradayCandles.single.high, 5750.0);
+      expect(bloc.state.intradayCandles.single.low, 5750.0);
+      expect(bloc.state.intradayCandles.single.close, 5750.0);
+      expect(bloc.state.impliedDailyExpectedMove, isNotNull);
+
+      bloc.add(const SpxMarketTick());
+      await _waitFor(() => bloc.state.spotPrice == 5756.0);
+
+      expect(bloc.state.sessionHighPrice, 5756.0);
+      expect(bloc.state.sessionLowPrice, 5750.0);
+      expect(bloc.state.intradaySpots.single.price, 5756.0);
+      expect(bloc.state.intradayCandles, hasLength(1));
+      expect(bloc.state.intradayCandles.single.open, 5750.0);
+      expect(bloc.state.intradayCandles.single.high, 5756.0);
+      expect(bloc.state.intradayCandles.single.low, 5750.0);
+      expect(bloc.state.intradayCandles.single.close, 5756.0);
+
+      bloc.add(const SpxMarketTick());
+      await _waitFor(() => bloc.state.spotPrice == 5744.0);
+
+      expect(bloc.state.sessionHighPrice, 5756.0);
+      expect(bloc.state.sessionLowPrice, 5744.0);
+      expect(bloc.state.intradaySpots.single.price, 5744.0);
+      expect(bloc.state.intradayCandles, hasLength(1));
+      expect(bloc.state.intradayCandles.single.open, 5750.0);
+      expect(bloc.state.intradayCandles.single.high, 5756.0);
+      expect(bloc.state.intradayCandles.single.low, 5744.0);
+      expect(bloc.state.intradayCandles.single.close, 5744.0);
     });
 
     test('tradier credentials update rebuilds the sandbox service', () async {
@@ -574,6 +637,51 @@ class _StaticChainSpxOptionsService extends SpxOptionsService {
   Future<List<OptionsContract>> fetchChain({required String expiration}) async {
     final now = DateTime.now();
     return contracts.map((c) => c.copyWith(lastUpdated: now)).toList();
+  }
+
+  @override
+  Future<List<OptionsContract>> tickPositions(
+      List<OptionsContract> contracts) async {
+    return contracts;
+  }
+}
+
+class _SequenceSpotSpxOptionsService extends SpxOptionsService {
+  final List<double> spots;
+  final OptionsContract contract;
+  var _spotIndex = 0;
+
+  _SequenceSpotSpxOptionsService({
+    required this.spots,
+    required this.contract,
+  }) : super(apiToken: null);
+
+  @override
+  bool get isMarketOpenNow => true;
+
+  @override
+  bool get isLive => false;
+
+  @override
+  Future<double> fetchSpxSpot() async {
+    final index = _spotIndex < spots.length ? _spotIndex : spots.length - 1;
+    final value = spots[index];
+    if (_spotIndex < spots.length - 1) {
+      _spotIndex += 1;
+    }
+    return value;
+  }
+
+  @override
+  Future<List<String>> fetchExpirations({int limit = 4}) async {
+    return [_formatYmd(contract.expiry)];
+  }
+
+  @override
+  Future<List<OptionsContract>> fetchChain({required String expiration}) async {
+    return [
+      contract.copyWith(lastUpdated: DateTime.now()),
+    ];
   }
 
   @override

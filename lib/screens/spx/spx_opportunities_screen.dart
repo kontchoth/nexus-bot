@@ -8,6 +8,7 @@ import '../../blocs/auth_bloc.dart';
 import '../../blocs/spx/spx_bloc.dart';
 import '../../services/spx/spx_opportunity_journal_repository.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/number_formatters.dart';
 
 enum _OpportunityScope { pending, missed }
 
@@ -200,7 +201,7 @@ class _SpxOpportunitiesScreenState extends State<SpxOpportunitiesScreen> {
               Text('Status: ${record.status}'),
               const SizedBox(height: 6),
               Text(
-                '${record.side.toUpperCase()} • strike ${record.strike.toStringAsFixed(1)} • ${record.dte}DTE',
+                '${record.side.toUpperCase()} • strike ${NexusFormatters.number(record.strike, decimals: 1)} • ${record.dte}DTE',
               ),
               const SizedBox(height: 6),
               Text('Mode: ${record.executionModeAtDecision}'),
@@ -473,7 +474,7 @@ class _SpxOpportunitiesScreenState extends State<SpxOpportunitiesScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            '${record.side.toUpperCase()} • strike ${record.strike.toStringAsFixed(1)} • ${record.dte}DTE',
+            '${record.side.toUpperCase()} • strike ${NexusFormatters.number(record.strike, decimals: 1)} • ${record.dte}DTE',
             style: GoogleFonts.spaceGrotesk(
               color: AppTheme.textMuted,
               fontSize: 11,
@@ -481,7 +482,7 @@ class _SpxOpportunitiesScreenState extends State<SpxOpportunitiesScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Mode: ${record.executionModeAtDecision} • premium ${record.premiumAtFind.toStringAsFixed(2)}',
+            'Mode: ${record.executionModeAtDecision} • premium ${NexusFormatters.usd(record.premiumAtFind)}',
             style: GoogleFonts.spaceGrotesk(
               color: AppTheme.textDim,
               fontSize: 10,

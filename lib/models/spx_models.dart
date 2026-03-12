@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:equatable/equatable.dart';
 export 'common_models.dart';
 
@@ -8,6 +10,8 @@ enum OptionsSide { call, put }
 enum SpxSignalType { buy, sell, watch }
 
 enum SpxContractMoneyness { itm, atm, otm }
+
+enum SpxIntradayMarkerType { signal, entry, exit }
 
 // ── Greeks ────────────────────────────────────────────────────────────────────
 
@@ -152,6 +156,30 @@ class OptionsContract extends Equatable {
     return moneynessForSpot(spot, tolerancePoints: tolerancePoints) ==
             SpxContractMoneyness.otm &&
         strikeDistanceFromSpot(spot) <= maxDistance;
+  }
+
+  double intrinsicValueAtSpot(double underlyingSpot) {
+    final rawIntrinsic = side == OptionsSide.call
+        ? underlyingSpot - strike
+        : strike - underlyingSpot;
+    return rawIntrinsic > 0 ? rawIntrinsic : 0.0;
+  }
+
+  double breakEvenSpot({
+    double? premium,
+  }) {
+    final debit = premium ?? midPrice;
+    return side == OptionsSide.call ? strike + debit : strike - debit;
+  }
+
+  double payoffAtExpiry(
+    double underlyingSpot, {
+    double? premium,
+    int contracts = 1,
+  }) {
+    final debit = premium ?? midPrice;
+    final pnlPerShare = intrinsicValueAtSpot(underlyingSpot) - debit;
+    return pnlPerShare * contracts * 100;
   }
 
   /// Whether this contract is in the liquid, tradeable delta zone (0.20–0.45).
@@ -359,6 +387,72 @@ class SpxSignal extends Equatable {
 
   @override
   List<Object?> get props => [contract.symbol, confidenceScore];
+}
+
+class SpxSpotSample extends Equatable {
+  final DateTime recordedAt;
+  final double price;
+
+  const SpxSpotSample({
+    required this.recordedAt,
+    required this.price,
+  });
+
+  @override
+  List<Object?> get props => [recordedAt, price];
+}
+
+class SpxCandleSample extends Equatable {
+  final DateTime bucketStart;
+  final double open;
+  final double high;
+  final double low;
+  final double close;
+  final int sampleCount;
+
+  const SpxCandleSample({
+    required this.bucketStart,
+    required this.open,
+    required this.high,
+    required this.low,
+    required this.close,
+    this.sampleCount = 1,
+  });
+
+  SpxCandleSample update(double price) {
+    return SpxCandleSample(
+      bucketStart: bucketStart,
+      open: open,
+      high: math.max(high, price),
+      low: math.min(low, price),
+      close: price,
+      sampleCount: sampleCount + 1,
+    );
+  }
+
+  @override
+  List<Object?> get props => [bucketStart, open, high, low, close, sampleCount];
+}
+
+class SpxIntradayMarker extends Equatable {
+  final DateTime timestamp;
+  final double spotPrice;
+  final SpxIntradayMarkerType type;
+  final String label;
+  final String symbol;
+  final OptionsSide? side;
+
+  const SpxIntradayMarker({
+    required this.timestamp,
+    required this.spotPrice,
+    required this.type,
+    required this.label,
+    required this.symbol,
+    this.side,
+  });
+
+  @override
+  List<Object?> get props => [timestamp, spotPrice, type, label, symbol, side];
 }
 
 // ── Intraday Strategy Models ─────────────────────────────────────────────────

@@ -83,6 +83,13 @@ class SpxState extends Equatable {
   /// Current SPX spot price.
   final double spotPrice;
   final bool isMarketOpen;
+  final List<SpxSpotSample> intradaySpots;
+  final List<SpxCandleSample> intradayCandles;
+  final List<SpxIntradayMarker> intradayMarkers;
+  final DateTime? sessionStartedAt;
+  final double? sessionOpenPrice;
+  final double? sessionHighPrice;
+  final double? sessionLowPrice;
 
   /// Most-recent GEX snapshot.
   final GexData? gexData;
@@ -108,9 +115,16 @@ class SpxState extends Equatable {
     required this.expirations,
     required this.spotPrice,
     required this.isMarketOpen,
+    required this.intradaySpots,
+    required this.intradayCandles,
+    required this.intradayMarkers,
     required this.logs,
     required this.scannerStatus,
     required this.dataMode,
+    this.sessionStartedAt,
+    this.sessionOpenPrice,
+    this.sessionHighPrice,
+    this.sessionLowPrice,
     this.selectedExpiration,
     this.selectedSymbol,
     this.gexData,
@@ -139,6 +153,9 @@ class SpxState extends Equatable {
         expirations: const [],
         spotPrice: 5750.0,
         isMarketOpen: false,
+        intradaySpots: const [],
+        intradayCandles: const [],
+        intradayMarkers: const [],
         logs: const [],
         scannerStatus: SpxScannerStatus.paused,
         dataMode: SpxDataMode.simulator,
@@ -159,6 +176,27 @@ class SpxState extends Equatable {
       positions.fold(0.0, (s, p) => s + p.unrealizedPnL);
 
   double get winRate => totalTrades == 0 ? 0 : (winTrades / totalTrades) * 100;
+
+  double? get impliedDailyExpectedMove {
+    final anchor = sessionOpenPrice ?? spotPrice;
+    if (anchor <= 0) return null;
+
+    final sourceChain = filteredChain.isNotEmpty ? filteredChain : chain;
+    if (sourceChain.isEmpty) return null;
+
+    final nearestCall =
+        _nearestExpectedMoveContract(sourceChain, anchor, OptionsSide.call);
+    final nearestPut =
+        _nearestExpectedMoveContract(sourceChain, anchor, OptionsSide.put);
+    final ivs = [
+      nearestCall?.impliedVolatility,
+      nearestPut?.impliedVolatility,
+    ].whereType<double>().where((iv) => iv > 0).toList();
+    if (ivs.isEmpty) return null;
+
+    final avgIv = ivs.reduce((a, b) => a + b) / ivs.length;
+    return anchor * avgIv / math.sqrt(252);
+  }
 
   bool get isTradierSandbox =>
       SpxTradierEnvironment.isSandbox(tradierEnvironment);
@@ -230,6 +268,13 @@ class SpxState extends Equatable {
     SpxDataMode? dataMode,
     double? spotPrice,
     bool? isMarketOpen,
+    List<SpxSpotSample>? intradaySpots,
+    List<SpxCandleSample>? intradayCandles,
+    List<SpxIntradayMarker>? intradayMarkers,
+    DateTime? sessionStartedAt,
+    double? sessionOpenPrice,
+    double? sessionHighPrice,
+    double? sessionLowPrice,
     GexData? gexData,
     List<TradeLog>? logs,
     String? tradierToken,
@@ -247,9 +292,16 @@ class SpxState extends Equatable {
       expirations: expirations ?? this.expirations,
       spotPrice: spotPrice ?? this.spotPrice,
       isMarketOpen: isMarketOpen ?? this.isMarketOpen,
+      intradaySpots: intradaySpots ?? this.intradaySpots,
+      intradayCandles: intradayCandles ?? this.intradayCandles,
+      intradayMarkers: intradayMarkers ?? this.intradayMarkers,
       logs: logs ?? this.logs,
       scannerStatus: scannerStatus ?? this.scannerStatus,
       dataMode: dataMode ?? this.dataMode,
+      sessionStartedAt: sessionStartedAt ?? this.sessionStartedAt,
+      sessionOpenPrice: sessionOpenPrice ?? this.sessionOpenPrice,
+      sessionHighPrice: sessionHighPrice ?? this.sessionHighPrice,
+      sessionLowPrice: sessionLowPrice ?? this.sessionLowPrice,
       selectedExpiration: selectedExpiration ?? this.selectedExpiration,
       selectedSymbol:
           clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
@@ -280,6 +332,13 @@ class SpxState extends Equatable {
         dataMode,
         spotPrice,
         isMarketOpen,
+        intradaySpots,
+        intradayCandles,
+        intradayMarkers,
+        sessionStartedAt,
+        sessionOpenPrice,
+        sessionHighPrice,
+        sessionLowPrice,
         gexData,
         logs,
         tradierToken,
@@ -291,4 +350,28 @@ class SpxState extends Equatable {
         totalTrades,
         winTrades,
       ];
+}
+
+OptionsContract? _nearestExpectedMoveContract(
+  List<OptionsContract> contracts,
+  double anchor,
+  OptionsSide side,
+) {
+  final candidates = contracts.where((contract) {
+    return contract.side == side && contract.impliedVolatility > 0;
+  }).toList();
+  if (candidates.isEmpty) return null;
+
+  candidates.sort((a, b) {
+    final distanceCompare = a
+        .strikeDistanceFromSpot(anchor)
+        .compareTo(b.strikeDistanceFromSpot(anchor));
+    if (distanceCompare != 0) return distanceCompare;
+
+    final dteCompare = a.daysToExpiry.compareTo(b.daysToExpiry);
+    if (dteCompare != 0) return dteCompare;
+
+    return b.volume.compareTo(a.volume);
+  });
+  return candidates.first;
 }

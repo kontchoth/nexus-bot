@@ -4,12 +4,16 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 
 import '../../blocs/auth_bloc.dart';
+import '../../services/spx/spx_trade_journal_analytics.dart';
 import '../../services/spx/spx_trade_journal_codes.dart';
 import '../../services/spx/spx_trade_journal_export_service.dart';
 import '../../services/spx/spx_trade_journal_repository.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/number_formatters.dart';
 
 enum _JournalScope { all, closed, open }
+
+enum _JournalHeatmapMetric { winRate, avgPnl }
 
 class SpxJournalScreen extends StatefulWidget {
   const SpxJournalScreen({super.key});
@@ -20,6 +24,7 @@ class SpxJournalScreen extends StatefulWidget {
 
 class _SpxJournalScreenState extends State<SpxJournalScreen> {
   _JournalScope _scope = _JournalScope.closed;
+  _JournalHeatmapMetric _heatmapMetric = _JournalHeatmapMetric.winRate;
   int _lookbackDays = 30;
   bool _loading = true;
   bool _exporting = false;
@@ -217,7 +222,8 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
     if (user == null) return;
 
     String? selectedVerdict = record.reviewVerdict;
-    final notesController = TextEditingController(text: record.reviewNotes ?? '');
+    final notesController =
+        TextEditingController(text: record.reviewNotes ?? '');
     final save = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -237,7 +243,7 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String?>(
-                    value: selectedVerdict,
+                    initialValue: selectedVerdict,
                     dropdownColor: AppTheme.bg3,
                     decoration: const InputDecoration(labelText: 'Verdict'),
                     items: const [
@@ -326,6 +332,7 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
   @override
   Widget build(BuildContext context) {
     final closed = _records.where((r) => r.exitedAt != null).toList();
+    final heatmap = buildSpxTradeHeatmap(closed);
     final netPnl = closed.fold<double>(0, (sum, r) => sum + (r.pnlUsd ?? 0));
     final wins = closed.where((r) => (r.pnlUsd ?? 0) > 0).length;
     final winRate =
@@ -365,11 +372,19 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
                 ),
                 _stat(
                   'Net PnL',
-                  '\$${netPnl.toStringAsFixed(2)}',
+                  NexusFormatters.usd(netPnl, signed: true),
                   netPnl >= 0 ? AppTheme.green : AppTheme.red,
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 10),
+          _TimeOfDayEdgeHeatmap(
+            heatmap: heatmap,
+            metric: _heatmapMetric,
+            onMetricChanged: (metric) {
+              setState(() => _heatmapMetric = metric);
+            },
           ),
           const SizedBox(height: 10),
           if (_loading)
@@ -527,9 +542,8 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
   Widget _recordTile(SpxTradeJournalRecord record) {
     final isClosed = record.exitedAt != null;
     final pnl = record.pnlUsd;
-    final pnlText = pnl == null
-        ? 'OPEN'
-        : '${pnl >= 0 ? '+' : ''}\$${pnl.toStringAsFixed(2)}';
+    final pnlText =
+        pnl == null ? 'OPEN' : NexusFormatters.usd(pnl, signed: true);
     final pnlColor = pnl == null
         ? AppTheme.blue
         : (pnl >= 0 ? AppTheme.green : AppTheme.red);
@@ -574,8 +588,7 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: sideColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),
@@ -606,19 +619,19 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
             spacing: 10,
             runSpacing: 4,
             children: [
-              _meta('Strike', record.strike.toStringAsFixed(0)),
+              _meta('Strike', NexusFormatters.number(record.strike)),
               _meta('Entry DTE', '${record.dteEntry}'),
               _meta('Exit DTE', '${record.dteExit ?? '—'}'),
               _meta('Contracts', '${record.contracts}'),
               _meta(
                 'Entry',
-                '\$${record.entryPremium.toStringAsFixed(2)}',
+                NexusFormatters.usd(record.entryPremium),
               ),
               _meta(
                 'Exit',
                 record.exitPremium == null
                     ? '—'
-                    : '\$${record.exitPremium!.toStringAsFixed(2)}',
+                    : NexusFormatters.usd(record.exitPremium!),
               ),
             ],
           ),
@@ -653,7 +666,8 @@ class _SpxJournalScreenState extends State<SpxJournalScreen> {
                 decoration: BoxDecoration(
                   color: reviewColor.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: reviewColor.withValues(alpha: 0.35)),
+                  border:
+                      Border.all(color: reviewColor.withValues(alpha: 0.35)),
                 ),
                 child: Text(
                   reviewLabel.toUpperCase(),
@@ -751,4 +765,436 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TimeOfDayEdgeHeatmap extends StatelessWidget {
+  final SpxTradeHeatmap heatmap;
+  final _JournalHeatmapMetric metric;
+  final ValueChanged<_JournalHeatmapMetric> onMetricChanged;
+
+  const _TimeOfDayEdgeHeatmap({
+    required this.heatmap,
+    required this.metric,
+    required this.onMetricChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasData =
+        heatmap.totalClosedTrades > 0 && heatmap.bucketKeys.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.bg2,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'TIME-OF-DAY EDGE',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textMuted,
+                        fontSize: 10,
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasData
+                          ? '${heatmap.totalClosedTrades} closed trades grouped by entry time and moneyness.'
+                          : 'Closed trades will populate a time-of-day edge map here.',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textDim,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _HeatmapMetricChip(
+                label: 'Win Rate',
+                selected: metric == _JournalHeatmapMetric.winRate,
+                onTap: () => onMetricChanged(_JournalHeatmapMetric.winRate),
+              ),
+              const SizedBox(width: 6),
+              _HeatmapMetricChip(
+                label: 'Avg PnL',
+                selected: metric == _JournalHeatmapMetric.avgPnl,
+                onTap: () => onMetricChanged(_JournalHeatmapMetric.avgPnl),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (!hasData)
+            const _EmptyState(
+              text:
+                  'No closed trades available for heatmap analysis in the current filter.',
+            )
+          else ...[
+            SizedBox(
+              height: 210,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: 90 + (heatmap.bucketKeys.length * 74),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          const SizedBox(width: 90),
+                          ...heatmap.bucketKeys.map((bucketKey) {
+                            return SizedBox(
+                              width: 74,
+                              child: Text(
+                                heatmap.bucketLabels[bucketKey] ?? bucketKey,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.spaceGrotesk(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ...[
+                        'itm',
+                        'atm',
+                        'otm',
+                      ].map((rowKey) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 90,
+                                child: Text(
+                                  _heatmapRowLabel(rowKey),
+                                  style: GoogleFonts.spaceGrotesk(
+                                    color: _heatmapRowColor(rowKey),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              ...heatmap.bucketKeys.map((bucketKey) {
+                                final cell = heatmap.cellsByMoneyness[rowKey]
+                                    ?[bucketKey];
+                                return _HeatmapCellTile(
+                                  summary: cell,
+                                  metric: metric,
+                                );
+                              }),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              metric == _JournalHeatmapMetric.winRate
+                  ? 'Green cells mark stronger win-rate pockets. Tap a cell for sample count and PnL detail.'
+                  : 'Green cells mark positive average PnL. Use sample count before trusting a strong-looking patch.',
+              style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textMuted,
+                fontSize: 10,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HeatmapMetricChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _HeatmapMetricChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color:
+              selected ? AppTheme.blue.withValues(alpha: 0.15) : AppTheme.bg3,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? AppTheme.blue : AppTheme.border2,
+          ),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.spaceGrotesk(
+            color: selected ? AppTheme.blue : AppTheme.textMuted,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeatmapCellTile extends StatelessWidget {
+  final SpxTradeHeatmapCell? summary;
+  final _JournalHeatmapMetric metric;
+
+  const _HeatmapCellTile({
+    required this.summary,
+    required this.metric,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cellColor = _heatmapCellColor(summary, metric);
+    final textColor = summary == null ? AppTheme.textDim : AppTheme.textPrimary;
+    final primaryText = summary == null
+        ? '—'
+        : (metric == _JournalHeatmapMetric.winRate
+            ? '${summary!.winRate.toStringAsFixed(0)}%'
+            : NexusFormatters.usd(summary!.avgPnlUsd, signed: true));
+    final secondaryText = summary == null ? '' : 'n=${summary!.tradeCount}';
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: summary == null
+            ? null
+            : () => _showHeatmapCellDetails(context, summary!),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 68,
+          height: 54,
+          decoration: BoxDecoration(
+            color: cellColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: summary == null ? AppTheme.border : Colors.transparent,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                primaryText,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.syne(
+                  color: textColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (secondaryText.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  secondaryText,
+                  style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.textPrimary.withValues(alpha: 0.82),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showHeatmapCellDetails(
+  BuildContext context,
+  SpxTradeHeatmapCell summary,
+) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: AppTheme.bg2,
+    builder: (context) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${summary.bucketLabel} • ${_heatmapRowLabel(summary.moneynessKey)}',
+                style: GoogleFonts.syne(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  _HeatmapDetailStat(
+                    label: 'Trades',
+                    value: '${summary.tradeCount}',
+                    color: AppTheme.textPrimary,
+                  ),
+                  _HeatmapDetailStat(
+                    label: 'Win Rate',
+                    value: '${summary.winRate.toStringAsFixed(0)}%',
+                    color: AppTheme.green,
+                  ),
+                  _HeatmapDetailStat(
+                    label: 'Avg PnL',
+                    value: NexusFormatters.usd(summary.avgPnlUsd, signed: true),
+                    color:
+                        summary.avgPnlUsd >= 0 ? AppTheme.green : AppTheme.red,
+                  ),
+                  _HeatmapDetailStat(
+                    label: 'Avg Win',
+                    value: summary.avgWinUsd == 0
+                        ? '—'
+                        : NexusFormatters.usd(summary.avgWinUsd),
+                    color: AppTheme.green,
+                  ),
+                  _HeatmapDetailStat(
+                    label: 'Avg Loss',
+                    value: summary.avgLossUsd == 0
+                        ? '—'
+                        : NexusFormatters.usd(summary.avgLossUsd),
+                    color: AppTheme.red,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Use this as a learning signal, not a rule. Small sample cells can look strong by accident.',
+                style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _HeatmapDetailStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _HeatmapDetailStat({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppTheme.bg3,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.textMuted,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: GoogleFonts.syne(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _heatmapRowLabel(String rowKey) {
+  return switch (rowKey) {
+    'itm' => 'ITM',
+    'atm' => 'ATM',
+    'otm' => 'OTM',
+    _ => rowKey.toUpperCase(),
+  };
+}
+
+Color _heatmapRowColor(String rowKey) {
+  return switch (rowKey) {
+    'itm' => AppTheme.blue,
+    'atm' => AppTheme.gold,
+    'otm' => AppTheme.textMuted,
+    _ => AppTheme.textPrimary,
+  };
+}
+
+Color _heatmapCellColor(
+  SpxTradeHeatmapCell? summary,
+  _JournalHeatmapMetric metric,
+) {
+  if (summary == null) return AppTheme.bg3;
+
+  final intensity = switch (metric) {
+    _JournalHeatmapMetric.winRate =>
+      ((summary.winRate - 50).abs() / 50).clamp(0.18, 1.0),
+    _JournalHeatmapMetric.avgPnl =>
+      (summary.avgPnlUsd.abs() / 500).clamp(0.18, 1.0),
+  };
+  final base = switch (metric) {
+    _JournalHeatmapMetric.winRate =>
+      summary.winRate >= 50 ? AppTheme.green : AppTheme.red,
+    _JournalHeatmapMetric.avgPnl =>
+      summary.avgPnlUsd >= 0 ? AppTheme.green : AppTheme.red,
+  };
+  return Color.lerp(
+        AppTheme.bg3,
+        base,
+        0.18 + (0.36 * intensity),
+      ) ??
+      AppTheme.bg3;
 }

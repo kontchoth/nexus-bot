@@ -78,6 +78,32 @@ void main() {
       expect(farOtm.isNearOtmForSpot(spot), isFalse);
     });
   });
+
+  group('OptionsContract payoff helpers', () {
+    test('computes call break-even and expiry payoff', () {
+      final contract = _buildContract(
+        symbol: 'CALL-PAYOFF',
+        side: OptionsSide.call,
+        strike: 5750,
+      );
+
+      expect(contract.breakEvenSpot(premium: 10), 5760);
+      expect(contract.payoffAtExpiry(5740, premium: 10), -1000);
+      expect(contract.payoffAtExpiry(5775, premium: 10), 1500);
+    });
+
+    test('computes put break-even and expiry payoff', () {
+      final contract = _buildContract(
+        symbol: 'PUT-PAYOFF',
+        side: OptionsSide.put,
+        strike: 5750,
+      );
+
+      expect(contract.breakEvenSpot(premium: 12), 5738);
+      expect(contract.payoffAtExpiry(5765, premium: 12), -1200);
+      expect(contract.payoffAtExpiry(5710, premium: 12), 2800);
+    });
+  });
 }
 
 OptionsContract _buildContract({

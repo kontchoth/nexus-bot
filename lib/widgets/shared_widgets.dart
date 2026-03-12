@@ -3,6 +3,7 @@ import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
+import '../utils/number_formatters.dart';
 
 // ── Signal Badge ──────────────────────────────────────────────────────────────
 
@@ -15,17 +16,25 @@ class SignalBadge extends StatelessWidget {
     final (label, bg, fg) = switch (signal) {
       SignalType.buy => ('BUY', AppTheme.greenBg, AppTheme.green),
       SignalType.sell => ('SELL', AppTheme.redBg, AppTheme.red),
-      SignalType.watch => (const Color(0xFF0A1A2A), AppTheme.bg4, AppTheme.blue),
+      SignalType.watch => (
+          const Color(0xFF0A1A2A),
+          AppTheme.bg4,
+          AppTheme.blue
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: fg.withOpacity(0.3)),
+        border: Border.all(color: fg.withValues(alpha: 0.3)),
       ),
       child: Text(
-        label == 'BUY' ? 'BUY' : label == 'SELL' ? 'SELL' : 'WATCH',
+        label == 'BUY'
+            ? 'BUY'
+            : label == 'SELL'
+                ? 'SELL'
+                : 'WATCH',
         style: GoogleFonts.spaceGrotesk(
           fontSize: 9,
           fontWeight: FontWeight.w700,
@@ -122,7 +131,7 @@ class MiniSparkline extends StatelessWidget {
               dotData: const FlDotData(show: false),
               belowBarData: BarAreaData(
                 show: true,
-                color: color.withOpacity(0.15),
+                color: color.withValues(alpha: 0.15),
               ),
             ),
           ],
@@ -145,7 +154,9 @@ class PriceChart extends StatelessWidget {
   Widget build(BuildContext context) {
     if (prices.isEmpty) return const SizedBox.shrink();
     final color = isPositive ? AppTheme.green : AppTheme.red;
-    final spots = prices.asMap().entries
+    final spots = prices
+        .asMap()
+        .entries
         .map((e) => FlSpot(e.key.toDouble(), e.value))
         .toList();
 
@@ -160,7 +171,7 @@ class PriceChart extends StatelessWidget {
           drawVerticalLine: false,
           horizontalInterval: priceRange > 0 ? priceRange / 4 : 1,
           getDrawingHorizontalLine: (_) => FlLine(
-            color: Colors.white.withOpacity(0.05),
+            color: Colors.white.withValues(alpha: 0.05),
             strokeWidth: 1,
           ),
         ),
@@ -172,7 +183,9 @@ class PriceChart extends StatelessWidget {
                 .map((s) => LineTooltipItem(
                       '\$${s.y.toStringAsFixed(2)}',
                       GoogleFonts.spaceGrotesk(
-                          color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                          color: color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600),
                     ))
                 .toList(),
           ),
@@ -189,7 +202,10 @@ class PriceChart extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [color.withOpacity(0.25), color.withOpacity(0.02)],
+                colors: [
+                  color.withValues(alpha: 0.25),
+                  color.withValues(alpha: 0.02),
+                ],
               ),
             ),
           ),
@@ -324,7 +340,7 @@ class PnLArc extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '\$${value.toStringAsFixed(0)}',
+                NexusFormatters.usd(value, decimals: 0),
                 style: GoogleFonts.syne(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
@@ -332,7 +348,7 @@ class PnLArc extends StatelessWidget {
                 ),
               ),
               Text(
-                'of \$${target.toStringAsFixed(0)}',
+                'of ${NexusFormatters.usd(target, decimals: 0)}',
                 style: GoogleFonts.spaceGrotesk(
                   fontSize: 9,
                   color: AppTheme.textMuted,
