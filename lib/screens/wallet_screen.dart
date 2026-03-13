@@ -197,6 +197,7 @@ class _WalletScreenState extends State<WalletScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              primary: false,
               padding: const EdgeInsets.all(14),
               children: [
                 Container(

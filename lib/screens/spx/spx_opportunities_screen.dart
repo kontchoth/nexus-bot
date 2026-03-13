@@ -285,6 +285,8 @@ class _SpxOpportunitiesScreenState extends State<SpxOpportunitiesScreen> {
       onRefresh: _reload,
       color: AppTheme.blue,
       child: ListView(
+        primary: false,
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(12),
         children: [
           _buildControls(),

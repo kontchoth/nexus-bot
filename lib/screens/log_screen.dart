@@ -20,6 +20,7 @@ class LogScreen extends StatelessWidget {
           );
         }
         return ListView.builder(
+          primary: false,
           itemCount: state.logs.length,
           itemBuilder: (context, i) => _LogTile(log: state.logs[i]),
         );

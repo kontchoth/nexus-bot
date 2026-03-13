@@ -16,6 +16,7 @@ class SpxPositionsScreen extends StatelessWidget {
       builder: (context, state) {
         if (state.positions.isEmpty) return const _EmptyPositions();
         return ListView.builder(
+          primary: false,
           padding: const EdgeInsets.all(10),
           itemCount: state.positions.length,
           itemBuilder: (context, i) =>

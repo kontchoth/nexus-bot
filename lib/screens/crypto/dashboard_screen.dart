@@ -14,6 +14,7 @@ class DashboardScreen extends StatelessWidget {
     return BlocBuilder<CryptoBloc, CryptoState>(
       builder: (context, state) {
         return ListView(
+          primary: false,
           padding: const EdgeInsets.all(12),
           children: [
             _PnLSection(state: state),

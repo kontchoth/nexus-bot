@@ -20,6 +20,7 @@ class PositionsScreen extends StatelessWidget {
           children: [
             Expanded(
               child: ListView.builder(
+                primary: false,
                 padding: const EdgeInsets.all(12),
                 itemCount: state.positions.length,
                 itemBuilder: (context, i) =>

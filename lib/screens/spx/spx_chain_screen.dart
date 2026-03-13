@@ -282,10 +282,25 @@ class _MarketChip extends StatelessWidget {
 
 // ── Strike ladder ────────────────────────────────────────────────────────────
 
-class _StrikeLadderPanel extends StatelessWidget {
+class _StrikeLadderPanel extends StatefulWidget {
   final SpxState state;
 
   const _StrikeLadderPanel({required this.state});
+
+  @override
+  State<_StrikeLadderPanel> createState() => _StrikeLadderPanelState();
+}
+
+class _StrikeLadderPanelState extends State<_StrikeLadderPanel> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  SpxState get state => widget.state;
 
   @override
   Widget build(BuildContext context) {
@@ -345,9 +360,10 @@ class _StrikeLadderPanel extends StatelessWidget {
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxBodyHeight),
             child: Scrollbar(
+              controller: _scrollController,
               thumbVisibility: rows.length > 4,
               child: SingleChildScrollView(
-                primary: false,
+                controller: _scrollController,
                 padding: const EdgeInsets.only(right: 4),
                 child: Column(
                   children: rows.map((row) {
@@ -633,6 +649,7 @@ class _ChainList extends StatelessWidget {
   Widget build(BuildContext context) {
     final chain = state.filteredChain;
     return ListView.builder(
+      primary: false,
       padding: const EdgeInsets.symmetric(vertical: 6),
       itemCount: chain.length,
       itemBuilder: (context, i) {

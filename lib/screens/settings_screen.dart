@@ -480,6 +480,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: _loadingPrefs
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              primary: false,
               padding: const EdgeInsets.all(14),
               children: [
                 _SectionCard(

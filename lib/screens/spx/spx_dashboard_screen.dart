@@ -18,6 +18,7 @@ class SpxDashboardScreen extends StatelessWidget {
     return BlocBuilder<SpxBloc, SpxState>(
       builder: (context, state) {
         return ListView(
+          primary: false,
           padding: const EdgeInsets.all(12),
           children: [
             _PnLSection(state: state),
@@ -2255,6 +2256,49 @@ class _ScannerToggle extends StatelessWidget {
 
 // ── Market Chart Panel ────────────────────────────────────────────────────────
 
+enum _SidebarMode { gex, oi }
+
+typedef _StrikeOi = ({int callOi, int putOi, int callVol, int putVol});
+
+Map<double, _StrikeOi> _buildStrikeOiMap(List<OptionsContract> contracts) {
+  final map = <double, _StrikeOi>{};
+  for (final c in contracts) {
+    final prev = map[c.strike];
+    if (c.side == OptionsSide.call) {
+      map[c.strike] = (
+        callOi: (prev?.callOi ?? 0) + c.openInterest,
+        putOi: prev?.putOi ?? 0,
+        callVol: (prev?.callVol ?? 0) + c.volume,
+        putVol: prev?.putVol ?? 0,
+      );
+    } else {
+      map[c.strike] = (
+        callOi: prev?.callOi ?? 0,
+        putOi: (prev?.putOi ?? 0) + c.openInterest,
+        callVol: prev?.callVol ?? 0,
+        putVol: (prev?.putVol ?? 0) + c.volume,
+      );
+    }
+  }
+  return map;
+}
+
+double? _callWallStrike(Map<double, _StrikeOi> oiMap) {
+  if (oiMap.isEmpty) return null;
+  return oiMap.entries
+      .reduce((a, b) => a.value.callOi >= b.value.callOi ? a : b)
+      .key;
+}
+
+double? _putSupportStrike(Map<double, _StrikeOi> oiMap, double spot) {
+  if (oiMap.isEmpty) return null;
+  final below = oiMap.entries.where((e) => e.key < spot).toList();
+  if (below.isEmpty) return null;
+  return below
+      .reduce((a, b) => a.value.putOi >= b.value.putOi ? a : b)
+      .key;
+}
+
 class _SpxMarketChartPanel extends StatefulWidget {
   final SpxState state;
   const _SpxMarketChartPanel({required this.state});
@@ -2265,6 +2309,7 @@ class _SpxMarketChartPanel extends StatefulWidget {
 
 class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
   _IntradayChartTimeframe _timeframe = _IntradayChartTimeframe.oneMinute;
+  _SidebarMode _sidebarMode = _SidebarMode.gex;
 
   @override
   Widget build(BuildContext context) {
@@ -2274,6 +2319,12 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
     final sessionHigh = state.sessionHighPrice ?? state.spotPrice;
     final sessionLow = state.sessionLowPrice ?? state.spotPrice;
     final strategy = state.strategySnapshot;
+    final oiMap = _buildStrikeOiMap(state.filteredChain);
+    final callWall = _callWallStrike(oiMap);
+    final putSupport = _putSupportStrike(oiMap, state.spotPrice);
+    final totalCallOi = oiMap.values.fold(0, (s, e) => s + e.callOi);
+    final totalPutOi = oiMap.values.fold(0, (s, e) => s + e.putOi);
+    final pcRatio = totalCallOi > 0 ? totalPutOi / totalCallOi : 0.0;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -2298,9 +2349,14 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
                 ),
               ),
               const Spacer(),
+              // GEX / OI sidebar toggle
+              _SidebarModeToggle(
+                selected: _sidebarMode,
+                onSelected: (m) => setState(() => _sidebarMode = m),
+              ),
+              const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
                   color: state.dataMode == SpxDataMode.live
                       ? AppTheme.blue.withValues(alpha: 0.12)
@@ -2326,11 +2382,9 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
               if (gex != null) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color:
-                        gex.isPositiveGex ? AppTheme.greenBg : AppTheme.redBg,
+                    color: gex.isPositiveGex ? AppTheme.greenBg : AppTheme.redBg,
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Text(
@@ -2338,8 +2392,7 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 8,
                       fontWeight: FontWeight.w700,
-                      color:
-                          gex.isPositiveGex ? AppTheme.green : AppTheme.red,
+                      color: gex.isPositiveGex ? AppTheme.green : AppTheme.red,
                     ),
                   ),
                 ),
@@ -2348,7 +2401,7 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
           ),
           const SizedBox(height: 10),
 
-          // Key level stats
+          // Stats row
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
@@ -2362,8 +2415,7 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
                   const SizedBox(width: 6),
                   _MarketStatChip(
                     label: 'GAMMA WALL',
-                    value: NexusFormatters.number(gex!.gammaWall!,
-                        decimals: 0),
+                    value: NexusFormatters.number(gex!.gammaWall!, decimals: 0),
                     color: AppTheme.gold,
                   ),
                 ],
@@ -2373,6 +2425,34 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
                     label: 'PUT WALL',
                     value: NexusFormatters.number(gex!.putWall!, decimals: 0),
                     color: AppTheme.red,
+                  ),
+                ],
+                if (callWall != null) ...[
+                  const SizedBox(width: 6),
+                  _MarketStatChip(
+                    label: 'CALL WALL (OI)',
+                    value: NexusFormatters.number(callWall, decimals: 0),
+                    color: AppTheme.green,
+                  ),
+                ],
+                if (putSupport != null) ...[
+                  const SizedBox(width: 6),
+                  _MarketStatChip(
+                    label: 'PUT SUPPORT',
+                    value: NexusFormatters.number(putSupport, decimals: 0),
+                    color: const Color(0xFFFF8C42),
+                  ),
+                ],
+                if (totalCallOi > 0) ...[
+                  const SizedBox(width: 6),
+                  _MarketStatChip(
+                    label: 'P/C RATIO',
+                    value: pcRatio.toStringAsFixed(2),
+                    color: pcRatio > 1.0
+                        ? AppTheme.red
+                        : pcRatio < 0.7
+                            ? AppTheme.green
+                            : AppTheme.textMuted,
                   ),
                 ],
                 const SizedBox(width: 6),
@@ -2411,13 +2491,12 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
               alignment: Alignment.center,
               child: Text(
                 'Collecting candle data…',
-                style: GoogleFonts.spaceGrotesk(
-                    fontSize: 12, color: AppTheme.textMuted),
+                style: GoogleFonts.spaceGrotesk(fontSize: 12, color: AppTheme.textMuted),
               ),
             )
           else
-            _buildChart(state, candles, gex, sessionHigh, sessionLow,
-                strategy),
+            _buildChart(state, candles, gex, sessionHigh, sessionLow, strategy,
+                oiMap, callWall, putSupport),
 
           const SizedBox(height: 10),
 
@@ -2427,17 +2506,23 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
             runSpacing: 6,
             children: [
               const _LevelLegendChip(label: 'Spot', color: AppTheme.blue),
-              const _LevelLegendChip(
-                  label: 'Day Range', color: AppTheme.textMuted),
+              const _LevelLegendChip(label: 'Day Range', color: AppTheme.textMuted),
               if (gex?.gammaWall != null)
-                const _LevelLegendChip(
-                    label: 'Gamma Wall', color: AppTheme.gold),
+                const _LevelLegendChip(label: 'Gamma Wall', color: AppTheme.gold),
               if (gex?.putWall != null)
-                const _LevelLegendChip(label: 'Put Wall', color: AppTheme.red),
-              const _LevelLegendChip(
-                  label: '+ GEX strikes', color: AppTheme.green),
-              const _LevelLegendChip(
-                  label: '- GEX strikes', color: AppTheme.red),
+                const _LevelLegendChip(label: 'Put Wall (GEX)', color: AppTheme.red),
+              if (callWall != null)
+                const _LevelLegendChip(label: 'Call Wall (OI)', color: AppTheme.green),
+              if (putSupport != null)
+                const _LevelLegendChip(
+                    label: 'Put Support (OI)', color: Color(0xFFFF8C42)),
+              if (_sidebarMode == _SidebarMode.gex) ...[
+                const _LevelLegendChip(label: '+ GEX', color: AppTheme.green),
+                const _LevelLegendChip(label: '- GEX', color: AppTheme.red),
+              ] else ...[
+                const _LevelLegendChip(label: 'Calls (OI)', color: AppTheme.green),
+                const _LevelLegendChip(label: 'Puts (OI)', color: AppTheme.red),
+              ],
             ],
           ),
         ],
@@ -2452,6 +2537,9 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
     double sessionHigh,
     double sessionLow,
     SpxStrategySnapshot? strategy,
+    Map<double, _StrikeOi> oiMap,
+    double? callWall,
+    double? putSupport,
   ) {
     final aggregated =
         _aggregateCandles(candles, timeframeMinutes: _timeframe.minutes);
@@ -2469,6 +2557,10 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
           candles: visible,
           markers: markers,
           gexData: gex,
+          oiMap: oiMap,
+          sidebarMode: _sidebarMode,
+          callWallStrike: callWall,
+          putSupportStrike: putSupport,
           currentSpot: state.spotPrice,
           sessionHigh: sessionHigh,
           sessionLow: sessionLow,
@@ -2481,17 +2573,80 @@ class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
   }
 }
 
+// ── Sidebar mode toggle ───────────────────────────────────────────────────────
+
+class _SidebarModeToggle extends StatelessWidget {
+  final _SidebarMode selected;
+  final ValueChanged<_SidebarMode> onSelected;
+
+  const _SidebarModeToggle({required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: _SidebarMode.values.map((mode) {
+        final isActive = mode == selected;
+        final label = mode == _SidebarMode.gex ? 'GEX' : 'OI';
+        return GestureDetector(
+          onTap: () => onSelected(mode),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? AppTheme.blue.withValues(alpha: 0.15)
+                  : AppTheme.bg4,
+              border: Border.all(
+                color: isActive ? AppTheme.blue : AppTheme.border2,
+              ),
+              borderRadius: BorderRadius.circular(
+                mode == _SidebarMode.gex
+                    ? const BorderRadius.only(
+                              topLeft: Radius.circular(4),
+                              bottomLeft: Radius.circular(4))
+                          .topLeft
+                          .x
+                    : const BorderRadius.only(
+                              topRight: Radius.circular(4),
+                              bottomRight: Radius.circular(4))
+                          .topRight
+                          .x,
+              ),
+            ),
+            child: Text(
+              label,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: isActive ? AppTheme.blue : AppTheme.textMuted,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
 // ── GEX + Candles Painter ─────────────────────────────────────────────────────
 
 class _GexCandlesPainter extends CustomPainter {
-  static const _gexZoneW = 72.0;
-  static const _axisW = 52.0;
+  static const _gexZoneW = 90.0;
+  static const _axisW = 54.0;
   static const _tp = 8.0;
   static const _bp = 10.0;
+  // OI sidebar layout constants
+  static const _oiLabelW = 28.0;
+  static const _oiCenterX = 59.0; // divider between put/call bars
+  static const _oiMaxBarW = 29.0; // max bar width per side
 
   final List<SpxCandleSample> candles;
   final List<SpxIntradayMarker> markers;
   final GexData? gexData;
+  final Map<double, _StrikeOi> oiMap;
+  final _SidebarMode sidebarMode;
+  final double? callWallStrike;
+  final double? putSupportStrike;
   final double currentSpot;
   final double sessionHigh;
   final double sessionLow;
@@ -2503,6 +2658,10 @@ class _GexCandlesPainter extends CustomPainter {
     required this.candles,
     required this.markers,
     required this.gexData,
+    required this.oiMap,
+    required this.sidebarMode,
+    this.callWallStrike,
+    this.putSupportStrike,
     required this.currentSpot,
     required this.sessionHigh,
     required this.sessionLow,
@@ -2539,8 +2698,12 @@ class _GexCandlesPainter extends CustomPainter {
     final minY = rawMin - span * 0.08;
     final maxY = rawMax + span * 0.08;
 
-    // GEX sidebar
-    _drawGexSidebar(canvas, candleRect, minY, maxY);
+    // Sidebar (GEX or OI mode)
+    if (sidebarMode == _SidebarMode.gex) {
+      _drawGexSidebar(canvas, candleRect, minY, maxY);
+    } else {
+      _drawOiSidebar(canvas, candleRect, minY, maxY);
+    }
 
     // Candle zone
     canvas.save();
@@ -2608,6 +2771,32 @@ class _GexCandlesPainter extends CustomPainter {
           Paint()
             ..color = AppTheme.red.withValues(alpha: 0.65)
             ..strokeWidth = 1.4);
+    }
+    // OI-based call wall (teal dashed)
+    if (callWallStrike != null &&
+        callWallStrike! >= minY &&
+        callWallStrike! <= maxY) {
+      final y = _mapValueToY(callWallStrike!, minY, maxY, candleRect);
+      _drawDashedHorizontalLine(
+        canvas, candleRect, y,
+        Paint()
+          ..color = AppTheme.green.withValues(alpha: 0.6)
+          ..strokeWidth = 1.2,
+        dashLength: 6, gapLength: 3,
+      );
+    }
+    // OI-based put support (orange dashed)
+    if (putSupportStrike != null &&
+        putSupportStrike! >= minY &&
+        putSupportStrike! <= maxY) {
+      final y = _mapValueToY(putSupportStrike!, minY, maxY, candleRect);
+      _drawDashedHorizontalLine(
+        canvas, candleRect, y,
+        Paint()
+          ..color = const Color(0xFFFF8C42).withValues(alpha: 0.6)
+          ..strokeWidth = 1.2,
+        dashLength: 6, gapLength: 3,
+      );
     }
 
     // Spot dashed
@@ -2737,11 +2926,135 @@ class _GexCandlesPainter extends CustomPainter {
     );
   }
 
+  void _drawOiSidebar(Canvas canvas, Rect candleRect, double minY, double maxY) {
+    if (oiMap.isEmpty) return;
+
+    final visibleStrikes = oiMap.keys
+        .where((s) => s >= minY && s <= maxY)
+        .toList()
+      ..sort();
+    if (visibleStrikes.isEmpty) return;
+
+    final maxOi = visibleStrikes
+        .map((s) => math.max(oiMap[s]!.callOi, oiMap[s]!.putOi).toDouble())
+        .fold(0.0, math.max);
+    if (maxOi == 0) return;
+
+    // Zone background
+    canvas.drawRect(
+      Rect.fromLTWH(0, candleRect.top, _gexZoneW, candleRect.height),
+      Paint()..color = AppTheme.bg.withValues(alpha: 0.5),
+    );
+
+    // Center divider
+    canvas.drawLine(
+      Offset(_oiCenterX, candleRect.top),
+      Offset(_oiCenterX, candleRect.bottom),
+      Paint()
+        ..color = AppTheme.border2.withValues(alpha: 0.5)
+        ..strokeWidth = 0.5,
+    );
+
+    // Spot guide line
+    final spotY = _mapValueToY(currentSpot, minY, maxY, candleRect);
+    canvas.drawLine(
+      Offset(0, spotY),
+      Offset(_gexZoneW, spotY),
+      Paint()
+        ..color = AppTheme.blue.withValues(alpha: 0.3)
+        ..strokeWidth = 0.8,
+    );
+
+    // Column headers (once, at the very top of the zone)
+    _paintChartText(
+      canvas,
+      text: 'P',
+      offset: Offset(_oiCenterX - 10, candleRect.top + 1),
+      style: GoogleFonts.spaceGrotesk(
+          fontSize: 7,
+          color: AppTheme.red.withValues(alpha: 0.5),
+          fontWeight: FontWeight.w700),
+      textAlign: TextAlign.right,
+      maxWidth: 10,
+    );
+    _paintChartText(
+      canvas,
+      text: 'C',
+      offset: Offset(_oiCenterX + 2, candleRect.top + 1),
+      style: GoogleFonts.spaceGrotesk(
+          fontSize: 7,
+          color: AppTheme.green.withValues(alpha: 0.5),
+          fontWeight: FontWeight.w700),
+      textAlign: TextAlign.left,
+      maxWidth: 10,
+    );
+
+    for (final strike in visibleStrikes) {
+      final entry = oiMap[strike]!;
+      final y = _mapValueToY(strike, minY, maxY, candleRect);
+
+      // Put bar — extends LEFT from center
+      final putW = (entry.putOi / maxOi) * _oiMaxBarW;
+      if (putW > 0.5) {
+        final isMaxPut = strike == putSupportStrike;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(_oiCenterX - putW, y - 3, putW, 6),
+            const Radius.circular(1),
+          ),
+          Paint()
+            ..color = AppTheme.red
+                .withValues(alpha: isMaxPut ? 0.75 : 0.38),
+        );
+      }
+
+      // Call bar — extends RIGHT from center
+      final callW = (entry.callOi / maxOi) * _oiMaxBarW;
+      if (callW > 0.5) {
+        final isMaxCall = strike == callWallStrike;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(_oiCenterX, y - 3, callW, 6),
+            const Radius.circular(1),
+          ),
+          Paint()
+            ..color = AppTheme.green
+                .withValues(alpha: isMaxCall ? 0.75 : 0.38),
+        );
+      }
+
+      // Strike label on the far left
+      _paintChartText(
+        canvas,
+        text: NexusFormatters.number(strike, decimals: 0),
+        offset: Offset(1, y - 6),
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 7,
+          color: AppTheme.textMuted.withValues(alpha: 0.6),
+        ),
+        textAlign: TextAlign.left,
+        maxWidth: _oiLabelW,
+      );
+    }
+
+    // Right edge divider
+    canvas.drawLine(
+      Offset(_gexZoneW, candleRect.top),
+      Offset(_gexZoneW, candleRect.bottom),
+      Paint()
+        ..color = AppTheme.border.withValues(alpha: 0.45)
+        ..strokeWidth = 0.5,
+    );
+  }
+
   void _drawRightAxisLabels(Canvas canvas, Rect candleRect, double minY, double maxY) {
     final levels = <(double, String, Color)>[
       (currentSpot, 'SPOT', AppTheme.blue),
       if (gexData?.gammaWall != null) (gexData!.gammaWall!, 'GW', AppTheme.gold),
       if (gexData?.putWall != null) (gexData!.putWall!, 'PW', AppTheme.red),
+      if (callWallStrike != null) (callWallStrike!, 'CW', AppTheme.green),
+      if (putSupportStrike != null)
+        (putSupportStrike!, 'PS', const Color(0xFFFF8C42)),
       (sessionHigh, 'HI', AppTheme.textPrimary),
       (sessionLow, 'LO', AppTheme.textMuted),
     ];
@@ -2768,6 +3081,10 @@ class _GexCandlesPainter extends CustomPainter {
   bool shouldRepaint(covariant _GexCandlesPainter old) =>
       old.candles != candles ||
       old.gexData != gexData ||
+      old.oiMap != oiMap ||
+      old.sidebarMode != sidebarMode ||
+      old.callWallStrike != callWallStrike ||
+      old.putSupportStrike != putSupportStrike ||
       old.currentSpot != currentSpot ||
       old.sessionHigh != sessionHigh ||
       old.sessionLow != sessionLow ||

@@ -236,6 +236,7 @@ class _CoinList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
+      primary: false,
       itemCount: state.coins.length,
       itemBuilder: (context, i) {
         final coin = state.coins[i];
