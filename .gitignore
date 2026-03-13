@@ -47,3 +47,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+functions/nexusbot-5edeb-firebase-adminsdk-fbsvc-0b3f4b9ddc.json
+functions/**/*adminsdk*.json
+functions/**/*firebase-adminsdk*.json
