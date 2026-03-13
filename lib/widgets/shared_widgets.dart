@@ -1,50 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'package:fl_chart/fl_chart.dart';
-import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../utils/number_formatters.dart';
-
-// ── Signal Badge ──────────────────────────────────────────────────────────────
-
-class SignalBadge extends StatelessWidget {
-  final SignalType signal;
-  const SignalBadge({super.key, required this.signal});
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, bg, fg) = switch (signal) {
-      SignalType.buy => ('BUY', AppTheme.greenBg, AppTheme.green),
-      SignalType.sell => ('SELL', AppTheme.redBg, AppTheme.red),
-      SignalType.watch => (
-          const Color(0xFF0A1A2A),
-          AppTheme.bg4,
-          AppTheme.blue
-        ),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: fg.withValues(alpha: 0.3)),
-      ),
-      child: Text(
-        label == 'BUY'
-            ? 'BUY'
-            : label == 'SELL'
-                ? 'SELL'
-                : 'WATCH',
-        style: GoogleFonts.spaceGrotesk(
-          fontSize: 9,
-          fontWeight: FontWeight.w700,
-          color: fg,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-}
 
 // ── Stat Box ──────────────────────────────────────────────────────────────────
 
@@ -86,57 +44,6 @@ class StatBox extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── Mini Sparkline ────────────────────────────────────────────────────────────
-
-class MiniSparkline extends StatelessWidget {
-  final List<double> prices;
-  final SignalType signal;
-
-  const MiniSparkline({super.key, required this.prices, required this.signal});
-
-  @override
-  Widget build(BuildContext context) {
-    if (prices.isEmpty) return const SizedBox(width: 80, height: 28);
-
-    final color = switch (signal) {
-      SignalType.buy => AppTheme.green,
-      SignalType.sell => AppTheme.red,
-      SignalType.watch => AppTheme.blue,
-    };
-
-    final spots = prices.asMap().entries.map((e) {
-      return FlSpot(e.key.toDouble(), e.value);
-    }).toList();
-
-    return SizedBox(
-      width: 80,
-      height: 28,
-      child: LineChart(
-        LineChartData(
-          gridData: const FlGridData(show: false),
-          titlesData: const FlTitlesData(show: false),
-          borderData: FlBorderData(show: false),
-          lineTouchData: const LineTouchData(enabled: false),
-          lineBarsData: [
-            LineChartBarData(
-              spots: spots,
-              isCurved: true,
-              color: color,
-              barWidth: 1.5,
-              dotData: const FlDotData(show: false),
-              belowBarData: BarAreaData(
-                show: true,
-                color: color.withValues(alpha: 0.15),
-              ),
-            ),
-          ],
-        ),
-        duration: Duration.zero,
       ),
     );
   }
@@ -212,37 +119,6 @@ class PriceChart extends StatelessWidget {
         ],
       ),
       duration: const Duration(milliseconds: 150),
-    );
-  }
-}
-
-// ── Coin Avatar ───────────────────────────────────────────────────────────────
-
-class CoinAvatar extends StatelessWidget {
-  final String symbol;
-  final double size;
-
-  const CoinAvatar({super.key, required this.symbol, this.size = 36});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: AppTheme.bg4,
-        borderRadius: BorderRadius.circular(size * 0.22),
-        border: Border.all(color: AppTheme.border2),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        symbol.length > 3 ? symbol.substring(0, 3) : symbol,
-        style: GoogleFonts.syne(
-          fontSize: size * 0.28,
-          fontWeight: FontWeight.w700,
-          color: AppTheme.blue,
-        ),
-      ),
     );
   }
 }

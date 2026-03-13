@@ -72,7 +72,6 @@ class SpxContractTargetingMode {
 class AppPreferences {
   final bool alertsEnabled;
   final bool hapticsEnabled;
-  final String cryptoDataProvider;
   final String spxTermMode;
   final String spxTradierEnvironment;
   final String spxContractTargetingMode;
@@ -87,7 +86,6 @@ class AppPreferences {
   const AppPreferences({
     this.alertsEnabled = true,
     this.hapticsEnabled = true,
-    this.cryptoDataProvider = 'binance',
     this.spxTermMode = 'exact',
     this.spxTradierEnvironment = SpxTradierEnvironment.production,
     this.spxContractTargetingMode = SpxContractTargetingMode.deltaZone,
@@ -104,7 +102,6 @@ class AppPreferences {
   AppPreferences copyWith({
     bool? alertsEnabled,
     bool? hapticsEnabled,
-    String? cryptoDataProvider,
     String? spxTermMode,
     String? spxTradierEnvironment,
     String? spxContractTargetingMode,
@@ -119,7 +116,6 @@ class AppPreferences {
     return AppPreferences(
       alertsEnabled: alertsEnabled ?? this.alertsEnabled,
       hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
-      cryptoDataProvider: cryptoDataProvider ?? this.cryptoDataProvider,
       spxTermMode: spxTermMode ?? this.spxTermMode,
       spxTradierEnvironment: SpxTradierEnvironment.normalize(
         spxTradierEnvironment ?? this.spxTradierEnvironment,
@@ -148,7 +144,6 @@ abstract class AppSettingsRepository {
 class LocalAppSettingsRepository implements AppSettingsRepository {
   static const _alertsSuffix = 'settings_alerts_enabled';
   static const _hapticsSuffix = 'settings_haptics_enabled';
-  static const _cryptoDataProviderSuffix = 'settings_crypto_data_provider';
   static const _spxTermModeSuffix = 'settings_spx_term_mode';
   static const _spxTradierEnvironmentSuffix =
       'settings_spx_tradier_environment';
@@ -165,8 +160,6 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
 
   String _alertsKey(String userId) => '$userId-$_alertsSuffix';
   String _hapticsKey(String userId) => '$userId-$_hapticsSuffix';
-  String _cryptoDataProviderKey(String userId) =>
-      '$userId-$_cryptoDataProviderSuffix';
   String _spxTermModeKey(String userId) => '$userId-$_spxTermModeSuffix';
   String _spxTradierEnvironmentKey(String userId) =>
       '$userId-$_spxTradierEnvironmentSuffix';
@@ -205,8 +198,6 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
     return AppPreferences(
       alertsEnabled: prefs.getBool(_alertsKey(userId)) ?? true,
       hapticsEnabled: prefs.getBool(_hapticsKey(userId)) ?? true,
-      cryptoDataProvider:
-          prefs.getString(_cryptoDataProviderKey(userId)) ?? 'binance',
       spxTermMode: prefs.getString(_spxTermModeKey(userId)) ?? 'exact',
       spxTradierEnvironment: SpxTradierEnvironment.normalize(
         prefs.getString(_spxTradierEnvironmentKey(userId)),
@@ -229,10 +220,6 @@ class LocalAppSettingsRepository implements AppSettingsRepository {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_alertsKey(userId), preferences.alertsEnabled);
     await prefs.setBool(_hapticsKey(userId), preferences.hapticsEnabled);
-    await prefs.setString(
-      _cryptoDataProviderKey(userId),
-      preferences.cryptoDataProvider,
-    );
     await prefs.setString(_spxTermModeKey(userId), preferences.spxTermMode);
     await prefs.setString(
       _spxTradierEnvironmentKey(userId),
@@ -317,8 +304,6 @@ class FirebaseAppSettingsRepository extends LocalAppSettingsRepository {
             prefsMap['alertsEnabled'] as bool? ?? local.alertsEnabled,
         hapticsEnabled:
             prefsMap['hapticsEnabled'] as bool? ?? local.hapticsEnabled,
-        cryptoDataProvider: prefsMap['cryptoDataProvider'] as String? ??
-            local.cryptoDataProvider,
         spxTermMode: prefsMap['spxTermMode'] as String? ?? local.spxTermMode,
         spxTradierEnvironment: spxTradierEnvironment == null
             ? local.spxTradierEnvironment
@@ -360,7 +345,6 @@ class FirebaseAppSettingsRepository extends LocalAppSettingsRepository {
         'preferences': {
           'alertsEnabled': preferences.alertsEnabled,
           'hapticsEnabled': preferences.hapticsEnabled,
-          'cryptoDataProvider': preferences.cryptoDataProvider,
           'spxTermMode': preferences.spxTermMode,
           'spxTradierEnvironment': SpxTradierEnvironment.normalize(
             preferences.spxTradierEnvironment,

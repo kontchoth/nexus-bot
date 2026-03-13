@@ -8,24 +8,19 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nexusbot/firebase_options.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'blocs/auth_bloc.dart';
-import 'blocs/crypto/crypto_bloc.dart';
 import 'blocs/spx/spx_bloc.dart';
 import 'models/models.dart';
 import 'screens/auth_screen.dart';
-import 'screens/crypto/scanner_screen.dart';
-import 'screens/crypto/positions_screen.dart';
-import 'screens/crypto/dashboard_screen.dart';
 import 'screens/spx/spx_chain_screen.dart';
 import 'screens/spx/spx_positions_screen.dart';
 import 'screens/spx/spx_dashboard_screen.dart';
 import 'screens/spx/spx_activity_screen.dart';
-import 'screens/log_screen.dart';
+import 'screens/spx/spx_signal_sheet_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/auth_repository.dart';
 import 'services/app_settings_repository.dart';
 import 'services/local_notification_service.dart';
 import 'services/remote_push_service.dart';
-import 'services/wallet_repository.dart';
 import 'services/firebase_auth_repository.dart';
 import 'services/spx/spx_opportunity_journal_repository.dart';
 import 'services/spx/spx_trade_journal_repository.dart';
@@ -35,13 +30,11 @@ import 'theme/app_theme.dart';
 const _secureStorage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
-const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AuthRepository authRepository = InMemoryAuthRepository();
   AppSettingsRepository settingsRepository = LocalAppSettingsRepository();
-  WalletRepository walletRepository = LocalWalletRepository();
   try {
     final options = DefaultFirebaseOptions.currentPlatform;
     await Firebase.initializeApp(options: options);
@@ -49,7 +42,6 @@ Future<void> main() async {
         ((options.iosClientId ?? '').isNotEmpty);
     authRepository = FirebaseAuthRepository(googleSignInEnabled: googleEnabled);
     settingsRepository = FirebaseAppSettingsRepository();
-    walletRepository = FirebaseWalletRepository();
   } catch (_) {
     // Firebase not configured — keep local in-memory auth for development.
   }
@@ -72,19 +64,16 @@ Future<void> main() async {
   runApp(NexusBotApp(
     authRepository: authRepository,
     settingsRepository: settingsRepository,
-    walletRepository: walletRepository,
   ));
 }
 
 class NexusBotApp extends StatelessWidget {
   final AuthRepository authRepository;
   final AppSettingsRepository settingsRepository;
-  final WalletRepository walletRepository;
   const NexusBotApp({
     super.key,
     required this.authRepository,
     required this.settingsRepository,
-    required this.walletRepository,
   });
 
   @override
@@ -94,7 +83,6 @@ class NexusBotApp extends StatelessWidget {
         RepositoryProvider<AuthRepository>(create: (_) => authRepository),
         RepositoryProvider<AppSettingsRepository>(
             create: (_) => settingsRepository),
-        RepositoryProvider<WalletRepository>(create: (_) => walletRepository),
       ],
       child: MultiBlocProvider(
         providers: [
@@ -145,7 +133,6 @@ class _AuthenticatedShell extends StatefulWidget {
 }
 
 class _AuthenticatedShellState extends State<_AuthenticatedShell> {
-  late final CryptoBloc _cryptoBloc;
   late final SpxBloc _spxBloc;
   late final SpxTradeJournalRepository _spxJournalRepository;
   late final SpxOpportunityJournalRepository _spxOpportunityRepository;
@@ -153,7 +140,6 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   @override
   void initState() {
     super.initState();
-    _cryptoBloc = CryptoBloc()..add(InitializeMarket());
     _spxJournalRepository = Firebase.apps.isNotEmpty
         ? FirebaseSpxTradeJournalRepository()
         : LocalSpxTradeJournalRepository();
@@ -187,19 +173,8 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
       _secureStorage,
       environment: tradierEnvironment,
     );
-    final robinhoodToken =
-        (await _secureStorage.read(key: _robinhoodTokenKey) ?? '').trim();
     if (!mounted) return;
     try {
-      _cryptoBloc.add(UpdateAlertPreferences(
-        alertsEnabled: settings.alertsEnabled,
-        hapticsEnabled: settings.hapticsEnabled,
-      ));
-      _cryptoBloc.add(UpdateRobinhoodToken(robinhoodToken));
-      final cryptoProvider = settings.cryptoDataProvider == 'robinhood'
-          ? CryptoDataProvider.robinhood
-          : CryptoDataProvider.binance;
-      _cryptoBloc.add(UpdateCryptoDataProvider(cryptoProvider));
       final mode = settings.spxTermMode == 'range'
           ? SpxTermMode.range
           : SpxTermMode.exact;
@@ -244,7 +219,6 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   @override
   void dispose() {
     unawaited(RemotePushService.instance.dispose());
-    _cryptoBloc.close();
     _spxBloc.close();
     super.dispose();
   }
@@ -260,11 +234,8 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
           value: _spxOpportunityRepository,
         ),
       ],
-      child: MultiBlocProvider(
-        providers: [
-          BlocProvider<CryptoBloc>.value(value: _cryptoBloc),
-          BlocProvider<SpxBloc>.value(value: _spxBloc),
-        ],
+      child: BlocProvider<SpxBloc>.value(
+        value: _spxBloc,
         child: const HomeShell(),
       ),
     );
@@ -281,36 +252,25 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
-  StreamSubscription<TradeAlert>? _cryptoAlertSub;
   StreamSubscription<TradeAlert>? _spxAlertSub;
   StreamSubscription<String>? _notificationTapSub;
   StreamSubscription<String>? _remoteOpenedPayloadSub;
   StreamSubscription<RemotePushMessage>? _remoteForegroundSub;
 
-  // 0 = Crypto, 1 = SPX
-  int _activeModule = 0;
-  int _cryptoTab = 0;
-  int _spxTab = 0;
-  int _spxActivityResetToken = 0;
+  int _activeTab = 0;
+  int _activityResetToken = 0;
   String? _spxOpportunityFocusId;
   bool _isAppForeground = true;
 
-  List<Widget> get _cryptoScreens => const [
-        ScannerScreen(),
-        PositionsScreen(),
-        DashboardScreen(),
-        LogScreen(),
-        SettingsScreen(),
-      ];
-
-  List<Widget> get _spxScreens => [
+  List<Widget> get _screens => [
         const SpxChainScreen(),
         const SpxPositionsScreen(),
         const SpxDashboardScreen(),
+        const SpxSignalSheetScreen(),
         SpxActivityScreen(
-          key: ValueKey<int>(_spxActivityResetToken),
+          key: ValueKey<int>(_activityResetToken),
           focusOpportunityId: _spxOpportunityFocusId,
-          focusRequestKey: _spxActivityResetToken,
+          focusRequestKey: _activityResetToken,
         ),
         const SettingsScreen(),
       ];
@@ -319,12 +279,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _cryptoAlertSub = context.read<CryptoBloc>().alertsStream.listen((alert) {
-      _onAlert(alert, fromSpx: false);
-    });
-    _spxAlertSub = context.read<SpxBloc>().alertsStream.listen((alert) {
-      _onAlert(alert, fromSpx: true);
-    });
+    _spxAlertSub =
+        context.read<SpxBloc>().alertsStream.listen(_onAlert);
     _notificationTapSub = LocalNotificationService.instance.tapPayloadStream
         .listen(_handleNotificationPayload);
     _remoteOpenedPayloadSub = RemotePushService.instance.openedPayloadStream
@@ -342,12 +298,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     _isAppForeground = state == AppLifecycleState.resumed;
   }
 
-  void _onAlert(TradeAlert alert, {required bool fromSpx}) {
+  void _onAlert(TradeAlert alert) {
     if (!mounted) return;
-    final cryptoPrefs = context.read<CryptoBloc>().state;
-    if (!cryptoPrefs.alertsEnabled) return;
-    final canDeepLink = fromSpx && _isOpportunityDeepLinkAlert(alert);
-    final canNotifyDevice = fromSpx && _isOpportunityAlert(alert);
+    final canDeepLink = _isOpportunityDeepLinkAlert(alert);
+    final canNotifyDevice = _isOpportunityAlert(alert);
     if (canNotifyDevice && !_isAppForeground) {
       unawaited(
         LocalNotificationService.instance.showSpxOpportunityNotification(
@@ -357,8 +311,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         ),
       );
     }
-    final haptics = cryptoPrefs.hapticsEnabled;
-    if (haptics) HapticFeedback.selectionClick();
+    HapticFeedback.selectionClick();
     final color = switch (alert.type) {
       TradeLogType.buy => AppTheme.green,
       TradeLogType.win => AppTheme.green,
@@ -392,8 +345,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             TradeAlertPayloads.isSpxOpportunity(alert.payload!))) {
       return true;
     }
-    final title = alert.title.toLowerCase();
-    return title.startsWith('spx opportunity found');
+    return alert.title.toLowerCase().startsWith('spx opportunity found');
   }
 
   bool _isOpportunityAlert(TradeAlert alert) {
@@ -402,24 +354,16 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             TradeAlertPayloads.isSpxOpportunity(alert.payload!))) {
       return true;
     }
-    final title = alert.title.toLowerCase();
-    return title.startsWith('spx opportunity');
+    return alert.title.toLowerCase().startsWith('spx opportunity');
   }
 
   void _onRemoteForegroundMessage(RemotePushMessage message) {
-    final payload = message.payload;
-    final fromSpx = payload != null &&
-        (payload == TradeAlertPayloads.spxOpportunities ||
-            TradeAlertPayloads.isSpxOpportunity(payload));
-    _onAlert(
-      TradeAlert(
-        title: message.title,
-        message: message.body,
-        type: TradeLogType.info,
-        payload: payload,
-      ),
-      fromSpx: fromSpx,
-    );
+    _onAlert(TradeAlert(
+      title: message.title,
+      message: message.body,
+      type: TradeLogType.info,
+      payload: message.payload,
+    ));
   }
 
   void _handleNotificationPayload(String payload) {
@@ -433,17 +377,15 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final isListPayload = payload == TradeAlertPayloads.spxOpportunities;
     if (focusId == null && !isListPayload) return;
     setState(() {
-      _activeModule = 1;
-      _spxTab = 3; // Activity tab
+      _activeTab = 4; // Activity tab
       _spxOpportunityFocusId = focusId;
-      _spxActivityResetToken++;
+      _activityResetToken++;
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _cryptoAlertSub?.cancel();
     _spxAlertSub?.cancel();
     _notificationTapSub?.cancel();
     _remoteOpenedPayloadSub?.cancel();
@@ -452,51 +394,25 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   }
 
   bool _needsToken(BuildContext context) {
-    if (_activeModule == 0) {
-      final cs = context.watch<CryptoBloc>().state;
-      return cs.marketProvider == CryptoDataProvider.robinhood &&
-          !cs.hasRobinhoodToken;
-    } else {
-      final token = context.watch<SpxBloc>().state.tradierToken ?? '';
-      return token.isEmpty;
-    }
-  }
-
-  void _goToSettings() {
-    setState(() {
-      if (_activeModule == 0) {
-        _cryptoTab = 4;
-      } else {
-        _spxTab = 4;
-      }
-    });
+    final token = context.watch<SpxBloc>().state.tradierToken ?? '';
+    return token.isEmpty;
   }
 
   @override
   Widget build(BuildContext context) {
-    final isCrypto = _activeModule == 0;
-    final activeTab = isCrypto ? _cryptoTab : _spxTab;
-    final screens = isCrypto ? _cryptoScreens : _spxScreens;
     final missingToken = _needsToken(context);
-    final tokenLabel =
-        _activeModule == 0 ? 'Robinhood token' : 'Tradier API token';
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: PreferredSize(
         preferredSize: Size.fromHeight(56 + MediaQuery.paddingOf(context).top),
-        child: _NexusAppBar(
-          activeModule: _activeModule,
-          onModuleChanged: (m) => setState(() {
-            _activeModule = m;
-          }),
-        ),
+        child: const _NexusAppBar(),
       ),
       body: Column(
         children: [
           if (missingToken)
             GestureDetector(
-              onTap: _goToSettings,
+              onTap: () => setState(() => _activeTab = 5),
               child: Container(
                 width: double.infinity,
                 color: Colors.orange.withValues(alpha: 0.15),
@@ -509,7 +425,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '$tokenLabel not configured — tap to go to Settings',
+                        'Tradier API token not configured — tap to go to Settings',
                         style: GoogleFonts.spaceGrotesk(
                           fontSize: 11,
                           color: Colors.orange,
@@ -523,19 +439,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          Expanded(child: IndexedStack(index: activeTab, children: screens)),
+          Expanded(
+              child: IndexedStack(index: _activeTab, children: _screens)),
         ],
       ),
       bottomNavigationBar: _NexusNavBar(
-        activeIndex: activeTab,
-        activeModule: _activeModule,
-        onTabChanged: (i) => setState(() {
-          if (isCrypto) {
-            _cryptoTab = i;
-          } else {
-            _spxTab = i;
-          }
-        }),
+        activeIndex: _activeTab,
+        onTabChanged: (i) => setState(() => _activeTab = i),
       ),
     );
   }
@@ -544,18 +454,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 // ── App Bar ───────────────────────────────────────────────────────────────────
 
 class _NexusAppBar extends StatelessWidget {
-  final int activeModule;
-  final ValueChanged<int> onModuleChanged;
-  const _NexusAppBar({
-    required this.activeModule,
-    required this.onModuleChanged,
-  });
+  const _NexusAppBar();
 
   @override
   Widget build(BuildContext context) {
-    final isCrypto = activeModule == 0;
     final isNarrow = MediaQuery.sizeOf(context).width < 390;
-
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.bg2,
@@ -568,7 +471,6 @@ class _NexusAppBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
-              // ── Logo ────────────────────────────────────────────────────
               RichText(
                 text: TextSpan(children: [
                   TextSpan(
@@ -587,26 +489,8 @@ class _NexusAppBar extends StatelessWidget {
                   ),
                 ]),
               ),
-              const SizedBox(width: 10),
-              // ── Module switcher pill ─────────────────────────────────────
-              _ModulePill(
-                activeModule: activeModule,
-                onChanged: onModuleChanged,
-              ),
-              const SizedBox(width: 8),
-              // ── Module-specific controls ─────────────────────────────────
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    reverse: true,
-                    child: isCrypto
-                        ? _CryptoControls(isNarrow: isNarrow)
-                        : _SpxControls(isNarrow: isNarrow),
-                  ),
-                ),
-              ),
+              const Spacer(),
+              _SpxControls(isNarrow: isNarrow),
             ],
           ),
         ),
@@ -615,167 +499,6 @@ class _NexusAppBar extends StatelessWidget {
   }
 }
 
-/// CRYPTO | SPX segmented toggle pill.
-class _ModulePill extends StatelessWidget {
-  final int activeModule;
-  final ValueChanged<int> onChanged;
-  const _ModulePill({required this.activeModule, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.bg3,
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: AppTheme.border2),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _PillSegment(
-            label: 'CRYPTO',
-            isActive: activeModule == 0,
-            onTap: () => onChanged(0),
-          ),
-          _PillSegment(
-            label: 'SPX',
-            isActive: activeModule == 1,
-            onTap: () => onChanged(1),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PillSegment extends StatelessWidget {
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-  const _PillSegment({
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        decoration: BoxDecoration(
-          color: isActive
-              ? AppTheme.blue.withValues(alpha: 0.18)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          label,
-          style: GoogleFonts.spaceGrotesk(
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            color: isActive ? AppTheme.blue : AppTheme.textMuted,
-            letterSpacing: 0.5,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Right-side controls shown when Crypto module is active.
-class _CryptoControls extends StatelessWidget {
-  final bool isNarrow;
-  const _CryptoControls({required this.isNarrow});
-
-  @override
-  Widget build(BuildContext context) {
-    return BlocBuilder<CryptoBloc, CryptoState>(
-      buildWhen: (p, c) =>
-          p.botStatus != c.botStatus || p.marketDataMode != c.marketDataMode,
-      builder: (context, state) {
-        final isActive = state.botStatus == BotStatus.active;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Data mode badge
-            Container(
-              padding: EdgeInsets.symmetric(
-                  horizontal: isNarrow ? 6 : 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: state.marketDataMode == MarketDataMode.live
-                    ? AppTheme.greenBg
-                    : AppTheme.bg3,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: state.marketDataMode == MarketDataMode.live
-                      ? AppTheme.green.withValues(alpha: 0.45)
-                      : AppTheme.border2,
-                ),
-              ),
-              child: Text(
-                state.marketDataMode == MarketDataMode.live
-                    ? (isNarrow ? 'LIVE' : 'LIVE FEED')
-                    : (isNarrow ? 'SIM' : 'SIMULATOR'),
-                style: GoogleFonts.spaceGrotesk(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: state.marketDataMode == MarketDataMode.live
-                        ? AppTheme.green
-                        : AppTheme.textMuted,
-                    letterSpacing: 0.5),
-              ),
-            ),
-            SizedBox(width: isNarrow ? 6 : 8),
-            // Bot toggle
-            GestureDetector(
-              onTap: () => context.read<CryptoBloc>().add(ToggleBot()),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: EdgeInsets.symmetric(
-                    horizontal: isNarrow ? 8 : 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isActive ? AppTheme.greenBg : AppTheme.bg3,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: isActive
-                        ? AppTheme.green.withValues(alpha: 0.5)
-                        : AppTheme.border2,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isActive ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      size: 14,
-                      color: isActive ? AppTheme.green : AppTheme.textMuted,
-                    ),
-                    if (!isNarrow) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        isActive ? 'PAUSE' : 'START',
-                        style: GoogleFonts.spaceGrotesk(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color:
-                                isActive ? AppTheme.green : AppTheme.textMuted),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// Right-side controls shown when SPX module is active.
 class _SpxControls extends StatelessWidget {
   final bool isNarrow;
   const _SpxControls({required this.isNarrow});
@@ -791,7 +514,6 @@ class _SpxControls extends StatelessWidget {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Data mode badge
             Container(
               padding: EdgeInsets.symmetric(
                   horizontal: isNarrow ? 6 : 8, vertical: 3),
@@ -816,7 +538,6 @@ class _SpxControls extends StatelessWidget {
               ),
             ),
             SizedBox(width: isNarrow ? 6 : 8),
-            // Scanner toggle
             GestureDetector(
               onTap: () =>
                   context.read<SpxBloc>().add(const ToggleSpxScanner()),
@@ -848,8 +569,9 @@ class _SpxControls extends StatelessWidget {
                         style: GoogleFonts.spaceGrotesk(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
-                            color:
-                                isActive ? AppTheme.green : AppTheme.textMuted),
+                            color: isActive
+                                ? AppTheme.green
+                                : AppTheme.textMuted),
                       ),
                     ],
                   ],
@@ -867,33 +589,23 @@ class _SpxControls extends StatelessWidget {
 
 class _NexusNavBar extends StatelessWidget {
   final int activeIndex;
-  final int activeModule;
   final ValueChanged<int> onTabChanged;
   const _NexusNavBar({
     required this.activeIndex,
-    required this.activeModule,
     required this.onTabChanged,
   });
 
-  static const _cryptoItems = [
-    (Icons.radar_rounded, 'Scanner'),
-    (Icons.account_balance_wallet_outlined, 'Positions'),
-    (Icons.bar_chart_rounded, 'Dashboard'),
-    (Icons.receipt_long_outlined, 'Activity'),
-    (Icons.settings_outlined, 'Settings'),
-  ];
-
-  static const _spxItems = [
+  static const _items = [
     (Icons.show_chart_rounded, 'Chain'),
     (Icons.account_balance_wallet_outlined, 'Positions'),
     (Icons.bar_chart_rounded, 'Dashboard'),
+    (Icons.assignment_outlined, 'Sheet'),
     (Icons.receipt_long_outlined, 'Activity'),
     (Icons.settings_outlined, 'Settings'),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final items = activeModule == 0 ? _cryptoItems : _spxItems;
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.bg2,
@@ -903,7 +615,7 @@ class _NexusNavBar extends StatelessWidget {
         child: SizedBox(
           height: 56,
           child: Row(
-            children: items.asMap().entries.map((entry) {
+            children: _items.asMap().entries.map((entry) {
               final i = entry.key;
               final (icon, label) = entry.value;
               final isActive = i == activeIndex;
@@ -916,13 +628,15 @@ class _NexusNavBar extends StatelessWidget {
                     children: [
                       Icon(icon,
                           size: 20,
-                          color: isActive ? AppTheme.blue : AppTheme.textMuted),
+                          color:
+                              isActive ? AppTheme.blue : AppTheme.textMuted),
                       const SizedBox(height: 2),
                       Text(label,
                           style: GoogleFonts.spaceGrotesk(
                               fontSize: 9,
-                              color:
-                                  isActive ? AppTheme.blue : AppTheme.textMuted,
+                              color: isActive
+                                  ? AppTheme.blue
+                                  : AppTheme.textMuted,
                               fontWeight: isActive
                                   ? FontWeight.w700
                                   : FontWeight.w400)),

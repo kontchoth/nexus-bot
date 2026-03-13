@@ -5,10 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import '../blocs/auth_bloc.dart';
-import '../blocs/crypto/crypto_bloc.dart';
 import '../blocs/spx/spx_bloc.dart';
-import 'wallet_screen.dart';
-import '../models/crypto_models.dart';
 import '../services/auth_repository.dart';
 import '../services/app_settings_repository.dart';
 import '../services/remote_push_service.dart';
@@ -18,7 +15,6 @@ import '../theme/app_theme.dart';
 const _storage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
-const _robinhoodTokenKey = 'robinhood_crypto_token';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -32,16 +28,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hapticsEnabled = true;
   bool _loadingPrefs = true;
   bool _mfaLoading = false;
-  CryptoBloc? _tradingBloc;
 
-  // Tradier token
   final _tokenController = TextEditingController();
   bool _tokenObscured = true;
   bool _tokenSaving = false;
-  final _robinhoodTokenController = TextEditingController();
-  bool _robinhoodTokenObscured = true;
-  bool _robinhoodTokenSaving = false;
-  CryptoDataProvider _cryptoDataProvider = CryptoDataProvider.binance;
   String _spxTradierEnvironment = SpxTradierEnvironment.production;
   String _spxContractTargetingMode = SpxContractTargetingMode.deltaZone;
   SpxTermMode _spxTermMode = SpxTermMode.exact;
@@ -56,11 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    try {
-      _tradingBloc = context.read<CryptoBloc>();
-    } catch (_) {
-      _tradingBloc = null;
-    }
     _loadSettingsData();
   }
 
@@ -68,14 +53,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final authState = context.read<AuthBloc>().state;
     final settingsRepository = context.read<AppSettingsRepository>();
     final user = authState.user;
-    final robinhoodToken =
-        (await _storage.read(key: _robinhoodTokenKey) ?? '').trim();
     if (user == null) {
       if (!mounted) return;
-      setState(() {
-        _robinhoodTokenController.text = robinhoodToken;
-        _loadingPrefs = false;
-      });
+      setState(() => _loadingPrefs = false);
       return;
     }
     final settings = await settingsRepository.load(user.id);
@@ -90,9 +70,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _alertsEnabled = settings.alertsEnabled;
       _hapticsEnabled = settings.hapticsEnabled;
-      _cryptoDataProvider = settings.cryptoDataProvider == 'robinhood'
-          ? CryptoDataProvider.robinhood
-          : CryptoDataProvider.binance;
       _spxTradierEnvironment = tradierEnvironment;
       _spxContractTargetingMode = SpxContractTargetingMode.normalize(
         settings.spxContractTargetingMode,
@@ -115,16 +92,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _spxMaxSlippagePct =
           settings.spxMaxSlippagePct.clamp(0.1, 100.0).toDouble();
       _tokenController.text = tradierToken;
-      _robinhoodTokenController.text = robinhoodToken;
       _loadingPrefs = false;
     });
-    _tradingBloc?.add(
-      UpdateAlertPreferences(
-        alertsEnabled: _alertsEnabled,
-        hapticsEnabled: _hapticsEnabled,
-      ),
-    );
-    _tradingBloc?.add(UpdateCryptoDataProvider(_cryptoDataProvider));
     _pushSpxContractTargeting();
     _pushSpxExecutionSettings();
   }
@@ -161,38 +130,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveRobinhoodToken() async {
-    final token = _robinhoodTokenController.text.trim();
-    setState(() => _robinhoodTokenSaving = true);
-    try {
-      if (token.isEmpty) {
-        await _storage.delete(key: _robinhoodTokenKey);
-      } else {
-        await _storage.write(key: _robinhoodTokenKey, value: token);
-      }
-      if (!mounted) return;
-      try {
-        context.read<CryptoBloc>().add(UpdateRobinhoodToken(token));
-      } catch (_) {}
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            token.isEmpty ? 'Robinhood token cleared' : 'Robinhood token saved',
-          ),
-          backgroundColor: AppTheme.blue.withValues(alpha: 0.9),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _robinhoodTokenSaving = false);
-    }
-  }
-
   @override
   void dispose() {
     _tokenController.dispose();
-    _robinhoodTokenController.dispose();
     super.dispose();
   }
 
@@ -204,10 +144,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           AppPreferences(
             alertsEnabled: _alertsEnabled,
             hapticsEnabled: _hapticsEnabled,
-            cryptoDataProvider:
-                _cryptoDataProvider == CryptoDataProvider.robinhood
-                    ? 'robinhood'
-                    : 'binance',
             spxTermMode: _spxTermMode == SpxTermMode.range ? 'range' : 'exact',
             spxTradierEnvironment: _spxTradierEnvironment,
             spxContractTargetingMode: _spxContractTargetingMode,
@@ -220,14 +156,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             spxMaxSlippagePct: _spxMaxSlippagePct,
           ),
         );
-  }
-
-  void _setCryptoProvider(CryptoDataProvider provider) {
-    setState(() => _cryptoDataProvider = provider);
-    try {
-      context.read<CryptoBloc>().add(UpdateCryptoDataProvider(provider));
-    } catch (_) {}
-    _persistPrefs();
   }
 
   void _setSpxContractTargetingMode(String mode) {
@@ -346,18 +274,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     var phone = user?.phoneNumber?.trim() ?? '';
     if (phone.isEmpty) {
       final entered = await _promptForPhoneNumber();
-      if (entered == null || entered.trim().isEmpty) {
-        return;
-      }
+      if (entered == null || entered.trim().isEmpty) return;
       phone = entered.trim();
     }
     if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Use E.164 format phone number, e.g. +15551234567',
-          ),
+          content: Text('Use E.164 format phone number, e.g. +15551234567'),
         ),
       );
       return;
@@ -393,9 +317,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(content: Text('MFA setup failed: $e')),
       );
     } finally {
-      if (mounted) {
-        setState(() => _mfaLoading = false);
-      }
+      if (mounted) setState(() => _mfaLoading = false);
     }
   }
 
@@ -404,30 +326,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = TextEditingController(text: existing);
     return showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Add phone number'),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Phone number',
-              hintText: '+15551234567',
-            ),
+      builder: (context) => AlertDialog(
+        title: const Text('Add phone number'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'Phone number',
+            hintText: '+15551234567',
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Continue'),
-            ),
-          ],
-        );
-      },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -435,29 +354,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Verify phone'),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'SMS code',
-            ),
+      builder: (context) => AlertDialog(
+        title: const Text('Verify phone'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'SMS code'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Verify'),
-            ),
-          ],
-        );
-      },
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -483,6 +397,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               primary: false,
               padding: const EdgeInsets.all(14),
               children: [
+                // ── Account ────────────────────────────────────────────────
                 _SectionCard(
                   title: 'Account',
                   child: Column(
@@ -518,24 +433,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           label: const Text('Sign out'),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const WalletScreen(),
-                            ),
-                          ),
-                          icon:
-                              const Icon(Icons.account_balance_wallet_outlined),
-                          label: const Text('Manage wallet'),
-                        ),
-                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ── Security ───────────────────────────────────────────────
                 _SectionCard(
                   title: 'Security',
                   child: Column(
@@ -564,19 +466,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed: (user?.mfaEnabled == true || _mfaLoading)
-                              ? null
-                              : _enableMfa,
+                          onPressed:
+                              (user?.mfaEnabled == true || _mfaLoading)
+                                  ? null
+                                  : _enableMfa,
                           icon: const Icon(Icons.verified_user_outlined),
                           label: Text(
-                            _mfaLoading ? 'Sending code...' : 'Enable MFA',
-                          ),
+                              _mfaLoading ? 'Sending code...' : 'Enable MFA'),
                         ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ── Tradier API ────────────────────────────────────────────
                 _SectionCard(
                   title: 'SPX Options — Tradier API',
                   child: Column(
@@ -606,7 +509,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        _spxTradierEnvironment == SpxTradierEnvironment.sandbox
+                        _spxTradierEnvironment ==
+                                SpxTradierEnvironment.sandbox
                             ? 'Testing endpoint: sandbox.tradier.com'
                             : 'Live endpoint: api.tradier.com',
                         style: GoogleFonts.spaceGrotesk(
@@ -665,8 +569,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ? const SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
                                 )
                               : const Icon(Icons.save_outlined, size: 16),
                           label: Text(
@@ -698,180 +602,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'Crypto Scanner Controls',
-                  child: BlocBuilder<CryptoBloc, CryptoState>(
-                    builder: (context, cryptoState) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Moved from the top bar for easier access and fewer accidental taps.',
-                            style: GoogleFonts.spaceGrotesk(
-                              color: AppTheme.textMuted,
-                              fontSize: 11,
-                              height: 1.4,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          _SelectCard<CryptoDataProvider>(
-                            label: 'Data Source',
-                            value: _cryptoDataProvider,
-                            items: CryptoDataProvider.values,
-                            itemLabel: (p) => p.label,
-                            onChanged: (p) {
-                              if (p == null) return;
-                              _setCryptoProvider(p);
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          if (_cryptoDataProvider ==
-                              CryptoDataProvider.robinhood)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: AppTheme.bg3,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: AppTheme.border2),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Robinhood Crypto Token',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textMuted,
-                                      fontSize: 10,
-                                      letterSpacing: 0.8,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: _robinhoodTokenController,
-                                    obscureText: _robinhoodTokenObscured,
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textPrimary,
-                                      fontSize: 12,
-                                    ),
-                                    decoration: InputDecoration(
-                                      isDense: true,
-                                      hintText: 'paste robinhood token…',
-                                      hintStyle: GoogleFonts.spaceGrotesk(
-                                        color: AppTheme.textDim,
-                                        fontSize: 11,
-                                      ),
-                                      filled: true,
-                                      fillColor: AppTheme.bg2,
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppTheme.border2,
-                                        ),
-                                      ),
-                                      enabledBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppTheme.border2,
-                                        ),
-                                      ),
-                                      suffixIcon: IconButton(
-                                        icon: Icon(
-                                          _robinhoodTokenObscured
-                                              ? Icons.visibility_outlined
-                                              : Icons.visibility_off_outlined,
-                                          size: 18,
-                                          color: AppTheme.textMuted,
-                                        ),
-                                        onPressed: () => setState(
-                                          () => _robinhoodTokenObscured =
-                                              !_robinhoodTokenObscured,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton.icon(
-                                      onPressed: _robinhoodTokenSaving
-                                          ? null
-                                          : _saveRobinhoodToken,
-                                      icon: _robinhoodTokenSaving
-                                          ? const SizedBox(
-                                              width: 14,
-                                              height: 14,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.save_outlined,
-                                              size: 16,
-                                            ),
-                                      label: Text(
-                                        _robinhoodTokenSaving
-                                            ? 'Saving…'
-                                            : 'Save Robinhood token',
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Default remains Binance unless you switch Data Source to Robinhood.',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textDim,
-                                      fontSize: 10,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (_cryptoDataProvider ==
-                              CryptoDataProvider.robinhood)
-                            const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _SelectCard<Exchange>(
-                                  label: 'Exchange',
-                                  value: cryptoState.selectedExchange,
-                                  items: Exchange.values,
-                                  itemLabel: (e) =>
-                                      e == Exchange.all ? 'All' : e.label,
-                                  onChanged: (e) {
-                                    if (e == null) return;
-                                    context
-                                        .read<CryptoBloc>()
-                                        .add(ChangeExchange(e));
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: _SelectCard<Timeframe>(
-                                  label: 'Timeframe',
-                                  value: cryptoState.selectedTimeframe,
-                                  items: Timeframe.values,
-                                  itemLabel: (t) => t.label,
-                                  onChanged: (t) {
-                                    if (t == null) return;
-                                    context
-                                        .read<CryptoBloc>()
-                                        .add(ChangeTimeframe(t));
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
+                // ── SPX Terms ──────────────────────────────────────────────
                 _SectionCard(
                   title: 'SPX Terms (DTE)',
                   child: Column(
@@ -928,7 +659,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 value: _spxMinDte,
                                 onMinus: () =>
                                     _setRange(minDte: _spxMinDte - 1),
-                                onPlus: () => _setRange(minDte: _spxMinDte + 1),
+                                onPlus: () =>
+                                    _setRange(minDte: _spxMinDte + 1),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -938,7 +670,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 value: _spxMaxDte,
                                 onMinus: () =>
                                     _setRange(maxDte: _spxMaxDte - 1),
-                                onPlus: () => _setRange(maxDte: _spxMaxDte + 1),
+                                onPlus: () =>
+                                    _setRange(maxDte: _spxMaxDte + 1),
                               ),
                             ),
                           ],
@@ -947,6 +680,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ── Contract Targeting ─────────────────────────────────────
                 _SectionCard(
                   title: 'SPX Contract Targeting',
                   child: Column(
@@ -1003,6 +737,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ── Entry Controls ─────────────────────────────────────────
                 _SectionCard(
                   title: 'SPX Entry Controls',
                   child: Column(
@@ -1033,9 +768,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ],
                         selected: {_spxExecutionMode},
-                        onSelectionChanged: (selection) {
-                          _setSpxExecutionMode(selection.first);
-                        },
+                        onSelectionChanged: (selection) =>
+                            _setSpxExecutionMode(selection.first),
                         style: ButtonStyle(
                           visualDensity: VisualDensity.compact,
                           textStyle: WidgetStatePropertyAll(
@@ -1098,6 +832,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ── Preferences ────────────────────────────────────────────
                 _SectionCard(
                   title: 'Preferences',
                   child: Column(
@@ -1106,17 +841,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _alertsEnabled,
                         onChanged: (v) {
                           setState(() => _alertsEnabled = v);
-                          _tradingBloc?.add(
-                            UpdateAlertPreferences(
-                              alertsEnabled: _alertsEnabled,
-                              hapticsEnabled: _hapticsEnabled,
-                            ),
-                          );
                           _pushSpxExecutionSettings();
                           unawaited(
-                            RemotePushService.instance.updateAlertsPreference(
-                              alertsEnabled: _alertsEnabled,
-                            ),
+                            RemotePushService.instance
+                                .updateAlertsPreference(alertsEnabled: v),
                           );
                           _persistPrefs();
                         },
@@ -1140,12 +868,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _hapticsEnabled,
                         onChanged: (v) {
                           setState(() => _hapticsEnabled = v);
-                          _tradingBloc?.add(
-                            UpdateAlertPreferences(
-                              alertsEnabled: _alertsEnabled,
-                              hapticsEnabled: _hapticsEnabled,
-                            ),
-                          );
                           _persistPrefs();
                         },
                         title: Text(
@@ -1256,12 +978,10 @@ class _SelectCard<T> extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
               items: items
-                  .map(
-                    (e) => DropdownMenuItem<T>(
-                      value: e,
-                      child: Text(itemLabel(e)),
-                    ),
-                  )
+                  .map((e) => DropdownMenuItem<T>(
+                        value: e,
+                        child: Text(itemLabel(e)),
+                      ))
                   .toList(),
               onChanged: onChanged,
             ),

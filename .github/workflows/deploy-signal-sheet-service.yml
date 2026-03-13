@@ -1,0 +1,69 @@
+name: Deploy Signal Sheet Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'micro-services/signal-sheet-service/**'
+      - '.github/workflows/deploy-signal-sheet-service.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-signal-sheet-service
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE_NAME: ${{ vars.SIGNAL_SHEET_SERVICE_NAME }}
+      SCHEDULER_LOCATION: ${{ vars.SIGNAL_SHEET_SCHEDULER_LOCATION }}
+      RUNTIME_SERVICE_ACCOUNT: ${{ vars.SIGNAL_SHEET_RUNTIME_SERVICE_ACCOUNT }}
+      SCHEDULER_SERVICE_ACCOUNT_EMAIL: ${{ vars.SIGNAL_SHEET_SCHEDULER_SERVICE_ACCOUNT_EMAIL }}
+      TRADIER_SECRET_NAME: ${{ vars.SIGNAL_SHEET_TRADIER_SECRET_NAME }}
+      ENVIRONMENT: production
+      SIGNAL_SYMBOL: ${{ vars.SIGNAL_SHEET_SYMBOL }}
+      FIRESTORE_COLLECTION: ${{ vars.SIGNAL_SHEET_FIRESTORE_COLLECTION }}
+      SIGNAL_ENGINE_VERSION: ${{ vars.SIGNAL_ENGINE_VERSION }}
+      SIGNAL_SHEET_SCHEMA_VERSION: ${{ vars.SIGNAL_SHEET_SCHEMA_VERSION }}
+      SIGNAL_SHEET_ARTIFACT_BUCKET: ${{ vars.SIGNAL_SHEET_ARTIFACT_BUCKET }}
+      SIGNAL_SHEET_ARTIFACT_PUBLIC_BASE_URL: ${{ vars.SIGNAL_SHEET_ARTIFACT_PUBLIC_BASE_URL }}
+      CREATE_SCHEDULER_JOBS: ${{ vars.SIGNAL_SHEET_CREATE_SCHEDULER_JOBS }}
+      CLOUD_RUN_MEMORY: ${{ vars.SIGNAL_SHEET_CLOUD_RUN_MEMORY }}
+      CLOUD_RUN_CPU: ${{ vars.SIGNAL_SHEET_CLOUD_RUN_CPU }}
+      CLOUD_RUN_TIMEOUT: ${{ vars.SIGNAL_SHEET_CLOUD_RUN_TIMEOUT }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_GITHUB_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install service dependencies
+        working-directory: micro-services/signal-sheet-service
+        run: pip install -r requirements.txt
+
+      - name: Run service tests
+        run: python -m unittest discover -s micro-services/signal-sheet-service/tests
+
+      - name: Deploy Cloud Run service and scheduler jobs
+        run: bash micro-services/signal-sheet-service/deploy_gcp.sh
+
