@@ -50,6 +50,13 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
 
   Future<void> _onInitialize(
       InitializeMarket event, Emitter<CryptoState> emit) async {
+    if (state.marketProvider == CryptoDataProvider.robinhood &&
+        (_robinhoodToken ?? '').isEmpty) {
+      _useLiveData = false;
+      _addLog('🔐 Robinhood token required — add it in Settings',
+          TradeLogType.warn);
+      return;
+    }
     List<CoinData> coins;
     final providerLabel = state.marketProvider.label;
     try {
@@ -392,7 +399,10 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
       '🔄 Crypto data source set to ${event.provider.label}',
       TradeLogType.info,
     );
-    add(InitializeMarket());
+    if (event.provider != CryptoDataProvider.robinhood ||
+        (_robinhoodToken ?? '').isNotEmpty) {
+      add(InitializeMarket());
+    }
   }
 
   void _onUpdateRobinhoodToken(
@@ -402,6 +412,7 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     final normalized = event.token.trim();
     _robinhoodToken = normalized.isEmpty ? null : normalized;
     _robinhoodMarketService.setApiToken(_robinhoodToken);
+    emit(state.copyWith(hasRobinhoodToken: _robinhoodToken != null));
     _addLog(
       _robinhoodToken == null
           ? '🔐 Robinhood token cleared'

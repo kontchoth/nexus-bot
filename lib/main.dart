@@ -451,11 +451,35 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  bool _needsToken(BuildContext context) {
+    if (_activeModule == 0) {
+      final cs = context.watch<CryptoBloc>().state;
+      return cs.marketProvider == CryptoDataProvider.robinhood &&
+          !cs.hasRobinhoodToken;
+    } else {
+      final token = context.watch<SpxBloc>().state.tradierToken ?? '';
+      return token.isEmpty;
+    }
+  }
+
+  void _goToSettings() {
+    setState(() {
+      if (_activeModule == 0) {
+        _cryptoTab = 4;
+      } else {
+        _spxTab = 4;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isCrypto = _activeModule == 0;
     final activeTab = isCrypto ? _cryptoTab : _spxTab;
     final screens = isCrypto ? _cryptoScreens : _spxScreens;
+    final missingToken = _needsToken(context);
+    final tokenLabel =
+        _activeModule == 0 ? 'Robinhood token' : 'Tradier API token';
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -468,7 +492,40 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           }),
         ),
       ),
-      body: IndexedStack(index: activeTab, children: screens),
+      body: Column(
+        children: [
+          if (missingToken)
+            GestureDetector(
+              onTap: _goToSettings,
+              child: Container(
+                width: double.infinity,
+                color: Colors.orange.withValues(alpha: 0.15),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        size: 14, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$tokenLabel not configured — tap to go to Settings',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 11,
+                          color: Colors.orange,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded,
+                        size: 14, color: Colors.orange),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(child: IndexedStack(index: activeTab, children: screens)),
+        ],
+      ),
       bottomNavigationBar: _NexusNavBar(
         activeIndex: activeTab,
         activeModule: _activeModule,

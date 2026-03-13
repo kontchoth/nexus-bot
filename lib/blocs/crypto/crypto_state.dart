@@ -12,6 +12,7 @@ class CryptoState extends Equatable {
   final MarketDataMode marketDataMode;
   final bool alertsEnabled;
   final bool hapticsEnabled;
+  final bool hasRobinhoodToken;
   final String? selectedSymbol;
 
   const CryptoState({
@@ -26,6 +27,7 @@ class CryptoState extends Equatable {
     required this.marketDataMode,
     required this.alertsEnabled,
     required this.hapticsEnabled,
+    this.hasRobinhoodToken = false,
     this.selectedSymbol,
   });
 
@@ -75,6 +77,7 @@ class CryptoState extends Equatable {
     MarketDataMode? marketDataMode,
     bool? alertsEnabled,
     bool? hapticsEnabled,
+    bool? hasRobinhoodToken,
     String? selectedSymbol,
     bool clearSelectedSymbol = false,
   }) {
@@ -90,6 +93,7 @@ class CryptoState extends Equatable {
       marketDataMode: marketDataMode ?? this.marketDataMode,
       alertsEnabled: alertsEnabled ?? this.alertsEnabled,
       hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
+      hasRobinhoodToken: hasRobinhoodToken ?? this.hasRobinhoodToken,
       selectedSymbol:
           clearSelectedSymbol ? null : (selectedSymbol ?? this.selectedSymbol),
     );
@@ -108,6 +112,7 @@ class CryptoState extends Equatable {
         marketDataMode,
         alertsEnabled,
         hapticsEnabled,
+        hasRobinhoodToken,
         selectedSymbol,
       ];
 }

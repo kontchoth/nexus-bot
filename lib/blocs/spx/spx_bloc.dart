@@ -230,6 +230,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     InitializeSpx event,
     Emitter<SpxState> emit,
   ) async {
+    if ((state.tradierToken ?? '').isEmpty) {
+      _addLog('🔑 Tradier token required — add it in Settings',
+          TradeLogType.warn);
+      return;
+    }
     _addLog('⚡ SPX Options module initializing…', TradeLogType.system);
 
     // Load expirations
@@ -943,11 +948,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     ));
     _addLog(
       token.isEmpty
-          ? '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token cleared — using simulator'
-          : '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token updated — retrying live feed',
+          ? '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token cleared'
+          : '🔑 Tradier ${SpxTradierEnvironment.label(environment).toLowerCase()} token updated — connecting to live feed',
       TradeLogType.system,
     );
-    add(const InitializeSpx());
+    if (token.isNotEmpty) add(const InitializeSpx());
   }
 
   void _onUpdateExecutionSettings(

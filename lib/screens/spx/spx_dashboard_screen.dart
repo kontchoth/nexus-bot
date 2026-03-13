@@ -26,6 +26,8 @@ class SpxDashboardScreen extends StatelessWidget {
             const SizedBox(height: 12),
             _IntradayLevelsPanel(state: state),
             const SizedBox(height: 12),
+            _SpxMarketChartPanel(state: state),
+            const SizedBox(height: 12),
             _GexPanel(state: state),
             const SizedBox(height: 12),
             _StrategyPanel(state: state),
@@ -2246,6 +2248,574 @@ class _ScannerToggle extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Market Chart Panel ────────────────────────────────────────────────────────
+
+class _SpxMarketChartPanel extends StatefulWidget {
+  final SpxState state;
+  const _SpxMarketChartPanel({required this.state});
+
+  @override
+  State<_SpxMarketChartPanel> createState() => _SpxMarketChartPanelState();
+}
+
+class _SpxMarketChartPanelState extends State<_SpxMarketChartPanel> {
+  _IntradayChartTimeframe _timeframe = _IntradayChartTimeframe.oneMinute;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final gex = state.gexData;
+    final candles = state.intradayCandles;
+    final sessionHigh = state.sessionHighPrice ?? state.spotPrice;
+    final sessionLow = state.sessionLowPrice ?? state.spotPrice;
+    final strategy = state.strategySnapshot;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.bg2,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              Text(
+                'GEX MARKET VIEW',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 10,
+                  color: AppTheme.textMuted,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: state.dataMode == SpxDataMode.live
+                      ? AppTheme.blue.withValues(alpha: 0.12)
+                      : AppTheme.bg4,
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(
+                    color: state.dataMode == SpxDataMode.live
+                        ? AppTheme.blue.withValues(alpha: 0.4)
+                        : AppTheme.border2,
+                  ),
+                ),
+                child: Text(
+                  state.dataMode == SpxDataMode.live ? 'LIVE' : 'SIM',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    color: state.dataMode == SpxDataMode.live
+                        ? AppTheme.blue
+                        : AppTheme.textMuted,
+                  ),
+                ),
+              ),
+              if (gex != null) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color:
+                        gex.isPositiveGex ? AppTheme.greenBg : AppTheme.redBg,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(
+                    '${gex.netGex >= 0 ? '+' : ''}${gex.netGex.toStringAsFixed(1)}B',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 8,
+                      fontWeight: FontWeight.w700,
+                      color:
+                          gex.isPositiveGex ? AppTheme.green : AppTheme.red,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Key level stats
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _MarketStatChip(
+                  label: 'SPOT',
+                  value: _formatSpxPrice(state.spotPrice),
+                  color: AppTheme.blue,
+                ),
+                if (gex?.gammaWall != null) ...[
+                  const SizedBox(width: 6),
+                  _MarketStatChip(
+                    label: 'GAMMA WALL',
+                    value: NexusFormatters.number(gex!.gammaWall!,
+                        decimals: 0),
+                    color: AppTheme.gold,
+                  ),
+                ],
+                if (gex?.putWall != null) ...[
+                  const SizedBox(width: 6),
+                  _MarketStatChip(
+                    label: 'PUT WALL',
+                    value: NexusFormatters.number(gex!.putWall!, decimals: 0),
+                    color: AppTheme.red,
+                  ),
+                ],
+                const SizedBox(width: 6),
+                _MarketStatChip(
+                  label: 'DAY HIGH',
+                  value: _formatSpxPrice(sessionHigh),
+                  color: AppTheme.textPrimary,
+                ),
+                const SizedBox(width: 6),
+                _MarketStatChip(
+                  label: 'DAY LOW',
+                  value: _formatSpxPrice(sessionLow),
+                  color: AppTheme.textMuted,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Timeframe toggle
+          _TimeframeToggleRow(
+            selected: _timeframe,
+            onSelected: (t) => setState(() => _timeframe = t),
+          ),
+          const SizedBox(height: 8),
+
+          // Chart
+          if (candles.length < 2)
+            Container(
+              height: 250,
+              decoration: BoxDecoration(
+                color: AppTheme.bg4,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.border2),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                'Collecting candle data…',
+                style: GoogleFonts.spaceGrotesk(
+                    fontSize: 12, color: AppTheme.textMuted),
+              ),
+            )
+          else
+            _buildChart(state, candles, gex, sessionHigh, sessionLow,
+                strategy),
+
+          const SizedBox(height: 10),
+
+          // Legend
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              const _LevelLegendChip(label: 'Spot', color: AppTheme.blue),
+              const _LevelLegendChip(
+                  label: 'Day Range', color: AppTheme.textMuted),
+              if (gex?.gammaWall != null)
+                const _LevelLegendChip(
+                    label: 'Gamma Wall', color: AppTheme.gold),
+              if (gex?.putWall != null)
+                const _LevelLegendChip(label: 'Put Wall', color: AppTheme.red),
+              const _LevelLegendChip(
+                  label: '+ GEX strikes', color: AppTheme.green),
+              const _LevelLegendChip(
+                  label: '- GEX strikes', color: AppTheme.red),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChart(
+    SpxState state,
+    List<SpxCandleSample> candles,
+    GexData? gex,
+    double sessionHigh,
+    double sessionLow,
+    SpxStrategySnapshot? strategy,
+  ) {
+    final aggregated =
+        _aggregateCandles(candles, timeframeMinutes: _timeframe.minutes);
+    final visible = _visibleCandles(aggregated);
+    final markers = _visibleMarkers(
+      state.intradayMarkers,
+      visible,
+      timeframeMinutes: _timeframe.minutes,
+    );
+    return SizedBox(
+      height: 260,
+      width: double.infinity,
+      child: CustomPaint(
+        painter: _GexCandlesPainter(
+          candles: visible,
+          markers: markers,
+          gexData: gex,
+          currentSpot: state.spotPrice,
+          sessionHigh: sessionHigh,
+          sessionLow: sessionLow,
+          openingRangeHigh: strategy?.minute14High,
+          openingRangeLow: strategy?.minute14Low,
+          timeframeMinutes: _timeframe.minutes,
+        ),
+      ),
+    );
+  }
+}
+
+// ── GEX + Candles Painter ─────────────────────────────────────────────────────
+
+class _GexCandlesPainter extends CustomPainter {
+  static const _gexZoneW = 72.0;
+  static const _axisW = 52.0;
+  static const _tp = 8.0;
+  static const _bp = 10.0;
+
+  final List<SpxCandleSample> candles;
+  final List<SpxIntradayMarker> markers;
+  final GexData? gexData;
+  final double currentSpot;
+  final double sessionHigh;
+  final double sessionLow;
+  final double? openingRangeHigh;
+  final double? openingRangeLow;
+  final int timeframeMinutes;
+
+  const _GexCandlesPainter({
+    required this.candles,
+    required this.markers,
+    required this.gexData,
+    required this.currentSpot,
+    required this.sessionHigh,
+    required this.sessionLow,
+    this.openingRangeHigh,
+    this.openingRangeLow,
+    required this.timeframeMinutes,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final candleRect = Rect.fromLTWH(
+      _gexZoneW,
+      _tp,
+      math.max(0, size.width - _gexZoneW - _axisW),
+      math.max(0, size.height - _tp - _bp),
+    );
+    if (candleRect.width <= 0 || candleRect.height <= 0) return;
+
+    // Build price range
+    final priceLevels = <double>[
+      currentSpot,
+      sessionHigh,
+      sessionLow,
+      for (final c in candles) c.high,
+      for (final c in candles) c.low,
+      if (openingRangeHigh != null) openingRangeHigh!,
+      if (openingRangeLow != null) openingRangeLow!,
+      if (gexData?.gammaWall != null) gexData!.gammaWall!,
+      if (gexData?.putWall != null) gexData!.putWall!,
+    ];
+    final rawMin = priceLevels.reduce(math.min);
+    final rawMax = priceLevels.reduce(math.max);
+    final span = math.max(rawMax - rawMin, 8.0);
+    final minY = rawMin - span * 0.08;
+    final maxY = rawMax + span * 0.08;
+
+    // GEX sidebar
+    _drawGexSidebar(canvas, candleRect, minY, maxY);
+
+    // Candle zone
+    canvas.save();
+    canvas.clipRect(candleRect);
+
+    final yInterval = _niceYAxisInterval(span);
+    for (double tick = (minY / yInterval).floor() * yInterval;
+        tick <= maxY + yInterval;
+        tick += yInterval) {
+      final y = _mapValueToY(tick, minY, maxY, candleRect);
+      canvas.drawLine(
+        Offset(candleRect.left, y),
+        Offset(candleRect.right, y),
+        Paint()
+          ..color = AppTheme.border.withValues(alpha: 0.22)
+          ..strokeWidth = 0.5,
+      );
+    }
+
+    // Session high/low
+    _drawDashedHorizontalLine(
+      canvas, candleRect,
+      _mapValueToY(sessionHigh, minY, maxY, candleRect),
+      Paint()
+        ..color = AppTheme.textPrimary.withValues(alpha: 0.28)
+        ..strokeWidth = 1,
+      dashLength: 4, gapLength: 4,
+    );
+    _drawDashedHorizontalLine(
+      canvas, candleRect,
+      _mapValueToY(sessionLow, minY, maxY, candleRect),
+      Paint()
+        ..color = AppTheme.textMuted.withValues(alpha: 0.4)
+        ..strokeWidth = 1,
+      dashLength: 4, gapLength: 4,
+    );
+
+    // Opening range
+    if (openingRangeHigh != null) {
+      final y = _mapValueToY(openingRangeHigh!, minY, maxY, candleRect);
+      canvas.drawLine(Offset(candleRect.left, y), Offset(candleRect.right, y),
+          Paint()
+            ..color = AppTheme.red.withValues(alpha: 0.6)
+            ..strokeWidth = 1);
+    }
+    if (openingRangeLow != null) {
+      final y = _mapValueToY(openingRangeLow!, minY, maxY, candleRect);
+      canvas.drawLine(Offset(candleRect.left, y), Offset(candleRect.right, y),
+          Paint()
+            ..color = AppTheme.green.withValues(alpha: 0.6)
+            ..strokeWidth = 1);
+    }
+
+    // GEX levels
+    if (gexData?.gammaWall != null) {
+      final y = _mapValueToY(gexData!.gammaWall!, minY, maxY, candleRect);
+      canvas.drawLine(Offset(candleRect.left, y), Offset(candleRect.right, y),
+          Paint()
+            ..color = AppTheme.gold.withValues(alpha: 0.75)
+            ..strokeWidth = 1.4);
+    }
+    if (gexData?.putWall != null) {
+      final y = _mapValueToY(gexData!.putWall!, minY, maxY, candleRect);
+      canvas.drawLine(Offset(candleRect.left, y), Offset(candleRect.right, y),
+          Paint()
+            ..color = AppTheme.red.withValues(alpha: 0.65)
+            ..strokeWidth = 1.4);
+    }
+
+    // Spot dashed
+    _drawDashedHorizontalLine(
+      canvas, candleRect,
+      _mapValueToY(currentSpot, minY, maxY, candleRect),
+      Paint()
+        ..color = AppTheme.blue.withValues(alpha: 0.65)
+        ..strokeWidth = 1.6,
+    );
+
+    // Candles
+    if (candles.isNotEmpty) {
+      final slotW = candleRect.width / candles.length;
+      final bodyW = (slotW * 0.56).clamp(3.0, 10.0);
+      for (var i = 0; i < candles.length; i++) {
+        final c = candles[i];
+        final cx = candleRect.left + slotW * i + slotW / 2;
+        final highY = _mapValueToY(c.high, minY, maxY, candleRect);
+        final lowY = _mapValueToY(c.low, minY, maxY, candleRect);
+        final openY = _mapValueToY(c.open, minY, maxY, candleRect);
+        final closeY = _mapValueToY(c.close, minY, maxY, candleRect);
+        final isUp = c.close >= c.open;
+        final color = isUp ? AppTheme.green : AppTheme.red;
+        canvas.drawLine(Offset(cx, highY), Offset(cx, lowY),
+            Paint()
+              ..color = color.withValues(alpha: 0.8)
+              ..strokeWidth = 1.0);
+        final bodyTop = math.min(openY, closeY);
+        final bodyBottom = math.max(openY, closeY);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTRB(cx - bodyW / 2, bodyTop, cx + bodyW / 2,
+                math.max(bodyTop + 1.5, bodyBottom)),
+            const Radius.circular(1),
+          ),
+          Paint()..color = color,
+        );
+      }
+    }
+
+    _drawIntradayMarkers(
+      canvas,
+      chartRect: candleRect,
+      candles: candles,
+      markers: markers,
+      timeframeMinutes: timeframeMinutes,
+      minY: minY,
+      maxY: maxY,
+      slotWidth: candles.isEmpty ? 0 : candleRect.width / candles.length,
+    );
+
+    canvas.restore();
+
+    // Right axis labels
+    _drawRightAxisLabels(canvas, candleRect, minY, maxY);
+  }
+
+  void _drawGexSidebar(Canvas canvas, Rect candleRect, double minY, double maxY) {
+    if (gexData == null || gexData!.gexByStrike.isEmpty) return;
+
+    final visibleStrikes = gexData!.gexByStrike.keys
+        .where((s) => s >= minY && s <= maxY)
+        .toList()
+      ..sort();
+    if (visibleStrikes.isEmpty) return;
+
+    final maxAbsGex = visibleStrikes
+        .map((s) => gexData!.gexByStrike[s]!.abs())
+        .fold(0.0, (prev, v) => math.max(prev, v));
+    if (maxAbsGex == 0) return;
+
+    const labelW = 32.0;
+    const barMaxW = _gexZoneW - labelW - 6;
+
+    // Zone background
+    canvas.drawRect(
+      Rect.fromLTWH(0, candleRect.top, _gexZoneW, candleRect.height),
+      Paint()..color = AppTheme.bg.withValues(alpha: 0.5),
+    );
+
+    // Spot guide line across GEX zone
+    final spotY = _mapValueToY(currentSpot, minY, maxY, candleRect);
+    canvas.drawLine(
+      Offset(0, spotY),
+      Offset(_gexZoneW, spotY),
+      Paint()
+        ..color = AppTheme.blue.withValues(alpha: 0.3)
+        ..strokeWidth = 0.8,
+    );
+
+    for (final strike in visibleStrikes) {
+      final gex = gexData!.gexByStrike[strike]!;
+      final y = _mapValueToY(strike, minY, maxY, candleRect);
+      final barW = (gex.abs() / maxAbsGex) * barMaxW;
+      final isPos = gex >= 0;
+      final color = isPos ? AppTheme.green : AppTheme.red;
+
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(_gexZoneW - barW - 2, y - 3, barW, 6),
+          const Radius.circular(1.5),
+        ),
+        Paint()..color = color.withValues(alpha: 0.45),
+      );
+
+      _paintChartText(
+        canvas,
+        text: NexusFormatters.number(strike, decimals: 0),
+        offset: Offset(2, y - 6),
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 8,
+          color: color.withValues(alpha: 0.7),
+        ),
+        textAlign: TextAlign.left,
+        maxWidth: labelW,
+      );
+    }
+
+    // Divider
+    canvas.drawLine(
+      Offset(_gexZoneW, candleRect.top),
+      Offset(_gexZoneW, candleRect.bottom),
+      Paint()
+        ..color = AppTheme.border.withValues(alpha: 0.45)
+        ..strokeWidth = 0.5,
+    );
+  }
+
+  void _drawRightAxisLabels(Canvas canvas, Rect candleRect, double minY, double maxY) {
+    final levels = <(double, String, Color)>[
+      (currentSpot, 'SPOT', AppTheme.blue),
+      if (gexData?.gammaWall != null) (gexData!.gammaWall!, 'GW', AppTheme.gold),
+      if (gexData?.putWall != null) (gexData!.putWall!, 'PW', AppTheme.red),
+      (sessionHigh, 'HI', AppTheme.textPrimary),
+      (sessionLow, 'LO', AppTheme.textMuted),
+    ];
+
+    for (final (price, label, color) in levels) {
+      if (price < minY || price > maxY) continue;
+      final y = _mapValueToY(price, minY, maxY, candleRect);
+      _paintChartText(
+        canvas,
+        text: '$label ${NexusFormatters.number(price, decimals: 0)}',
+        offset: Offset(candleRect.right + 4, y - 6),
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 8,
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+        textAlign: TextAlign.left,
+        maxWidth: _axisW - 4,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GexCandlesPainter old) =>
+      old.candles != candles ||
+      old.gexData != gexData ||
+      old.currentSpot != currentSpot ||
+      old.sessionHigh != sessionHigh ||
+      old.sessionLow != sessionLow ||
+      old.openingRangeHigh != openingRangeHigh ||
+      old.openingRangeLow != openingRangeLow ||
+      old.markers != markers;
+}
+
+class _MarketStatChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MarketStatChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 8,
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.7,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: GoogleFonts.syne(
+                fontSize: 12, color: color, fontWeight: FontWeight.w700),
+          ),
+        ],
       ),
     );
   }
