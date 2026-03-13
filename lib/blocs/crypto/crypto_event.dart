@@ -10,6 +10,10 @@ class InitializeMarket extends CryptoEvent {}
 
 class MarketTick extends CryptoEvent {}
 
+class LoadCryptoOpportunities extends CryptoEvent {}
+
+class RefreshCryptoOpportunities extends CryptoEvent {}
+
 class ToggleBot extends CryptoEvent {}
 
 class ResetDay extends CryptoEvent {}
@@ -35,11 +39,27 @@ class SelectCoin extends CryptoEvent {
   List<Object?> get props => [symbol];
 }
 
+class SelectCryptoOpportunity extends CryptoEvent {
+  final String? opportunityId;
+  const SelectCryptoOpportunity(this.opportunityId);
+
+  @override
+  List<Object?> get props => [opportunityId];
+}
+
 class ChangeExchange extends CryptoEvent {
   final Exchange exchange;
   const ChangeExchange(this.exchange);
   @override
   List<Object?> get props => [exchange];
+}
+
+class ChangeCryptoScannerView extends CryptoEvent {
+  final CryptoScannerViewMode viewMode;
+  const ChangeCryptoScannerView(this.viewMode);
+
+  @override
+  List<Object?> get props => [viewMode];
 }
 
 class ChangeTimeframe extends CryptoEvent {

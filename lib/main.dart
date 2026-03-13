@@ -10,6 +10,10 @@ import 'package:nexusbot/theme/google_fonts_stub.dart';
 import 'blocs/auth_bloc.dart';
 import 'blocs/crypto/crypto_bloc.dart';
 import 'blocs/spx/spx_bloc.dart';
+import 'blocs/subscription/subscription_cubit.dart';
+import 'screens/subscription/paywall_screen.dart';
+import 'widgets/subscription/paywall_gate.dart';
+import 'widgets/subscription/trial_banner.dart';
 import 'models/models.dart';
 import 'screens/auth_screen.dart';
 import 'screens/crypto/scanner_screen.dart';
@@ -147,6 +151,7 @@ class _AuthenticatedShell extends StatefulWidget {
 class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   late final CryptoBloc _cryptoBloc;
   late final SpxBloc _spxBloc;
+  late final SubscriptionCubit _subscriptionCubit;
   late final SpxTradeJournalRepository _spxJournalRepository;
   late final SpxOpportunityJournalRepository _spxOpportunityRepository;
 
@@ -154,6 +159,8 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
   void initState() {
     super.initState();
     _cryptoBloc = CryptoBloc()..add(InitializeMarket());
+    _subscriptionCubit = SubscriptionCubit()
+      ..initialize(widget.user.id);
     _spxJournalRepository = Firebase.apps.isNotEmpty
         ? FirebaseSpxTradeJournalRepository()
         : LocalSpxTradeJournalRepository();
@@ -246,6 +253,7 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
     unawaited(RemotePushService.instance.dispose());
     _cryptoBloc.close();
     _spxBloc.close();
+    _subscriptionCubit.close();
     super.dispose();
   }
 
@@ -264,6 +272,7 @@ class _AuthenticatedShellState extends State<_AuthenticatedShell> {
         providers: [
           BlocProvider<CryptoBloc>.value(value: _cryptoBloc),
           BlocProvider<SpxBloc>.value(value: _spxBloc),
+          BlocProvider<SubscriptionCubit>.value(value: _subscriptionCubit),
         ],
         child: const HomeShell(),
       ),
@@ -294,6 +303,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _spxActivityResetToken = 0;
   String? _spxOpportunityFocusId;
   bool _isAppForeground = true;
+  static const double _tabletRailBreakpoint = 980;
+  static const double _maxContentWidth = 1320;
 
   List<Widget> get _cryptoScreens => const [
         ScannerScreen(),
@@ -456,6 +467,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final isCrypto = _activeModule == 0;
     final activeTab = isCrypto ? _cryptoTab : _spxTab;
     final screens = isCrypto ? _cryptoScreens : _spxScreens;
+    final useSideRail =
+        MediaQuery.sizeOf(context).width >= _tabletRailBreakpoint;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -468,18 +481,68 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           }),
         ),
       ),
-      body: IndexedStack(index: activeTab, children: screens),
-      bottomNavigationBar: _NexusNavBar(
-        activeIndex: activeTab,
-        activeModule: _activeModule,
-        onTabChanged: (i) => setState(() {
-          if (isCrypto) {
-            _cryptoTab = i;
-          } else {
-            _spxTab = i;
-          }
-        }),
+      body: Row(
+        children: [
+          if (useSideRail)
+            _NexusSideRail(
+              activeIndex: activeTab,
+              activeModule: _activeModule,
+              onTabChanged: (i) => setState(() {
+                if (isCrypto) {
+                  _cryptoTab = i;
+                } else {
+                  _spxTab = i;
+                }
+              }),
+            ),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final targetWidth =
+                      useSideRail && constraints.maxWidth > _maxContentWidth
+                          ? _maxContentWidth
+                          : constraints.maxWidth;
+                  return Align(
+                    alignment: Alignment.topCenter,
+                    child: SizedBox(
+                      width: targetWidth,
+                      height: constraints.maxHeight,
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          useSideRail ? 18 : 0,
+                          useSideRail ? 14 : 0,
+                          useSideRail ? 18 : 0,
+                          useSideRail ? 14 : 0,
+                        ),
+                        child: _SubscriptionAwareContent(
+                          activeModule: _activeModule,
+                          activeTab: activeTab,
+                          screens: screens,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
+      bottomNavigationBar: useSideRail
+          ? null
+          : _NexusNavBar(
+              activeIndex: activeTab,
+              activeModule: _activeModule,
+              onTabChanged: (i) => setState(() {
+                if (isCrypto) {
+                  _cryptoTab = i;
+                } else {
+                  _spxTab = i;
+                }
+              }),
+            ),
     );
   }
 }
@@ -875,6 +938,179 @@ class _NexusNavBar extends StatelessWidget {
               );
             }).toList(),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NexusSideRail extends StatelessWidget {
+  final int activeIndex;
+  final int activeModule;
+  final ValueChanged<int> onTabChanged;
+
+  const _NexusSideRail({
+    required this.activeIndex,
+    required this.activeModule,
+    required this.onTabChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final items =
+        activeModule == 0 ? _NexusNavBar._cryptoItems : _NexusNavBar._spxItems;
+    return Container(
+      width: 108,
+      decoration: const BoxDecoration(
+        color: AppTheme.bg2,
+        border: Border(right: BorderSide(color: AppTheme.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 14),
+          child: Column(
+            children: [
+              Text(
+                activeModule == 0 ? 'CRYPTO' : 'SPX',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textMuted,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final entry in items.asMap().entries) ...[
+                _RailNavItem(
+                  icon: entry.value.$1,
+                  label: entry.value.$2,
+                  isActive: entry.key == activeIndex,
+                  onTap: () => onTabChanged(entry.key),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Subscription-Aware Content ────────────────────────────────────────────────
+
+/// Renders the active module's screens with subscription gating.
+/// - Settings tab (index 4) is always free.
+/// - During trial: shows [TrialBanner] above the content.
+/// - Without entitlement: shows [PaywallScreen] instead of the content.
+class _SubscriptionAwareContent extends StatelessWidget {
+  final int activeModule;
+  final int activeTab;
+  final List<Widget> screens;
+
+  const _SubscriptionAwareContent({
+    required this.activeModule,
+    required this.activeTab,
+    required this.screens,
+  });
+
+  static const _settingsTab = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<SubscriptionCubit, SubscriptionState>(
+      buildWhen: (p, c) =>
+          p.isLoading != c.isLoading ||
+          p.hasCryptoPro != c.hasCryptoPro ||
+          p.hasSpxPro != c.hasSpxPro ||
+          p.isTrialing != c.isTrialing,
+      builder: (context, sub) {
+        final plan = activeModule == 0
+            ? SubscriptionPlan.cryptoPro
+            : SubscriptionPlan.spxPro;
+
+        final hasAccess = sub.isLoading ||
+            activeTab == _settingsTab ||
+            (plan == SubscriptionPlan.cryptoPro
+                ? sub.hasCryptoPro || sub.isTrialing
+                : sub.hasSpxPro || sub.isTrialing);
+
+        final stack = IndexedStack(index: activeTab, children: screens);
+
+        if (!hasAccess) {
+          // Replace non-settings tabs with the paywall.
+          return IndexedStack(
+            index: activeTab == _settingsTab ? 1 : 0,
+            children: [
+              PaywallScreen(plan: plan),
+              screens[_settingsTab],
+            ],
+          );
+        }
+
+        if (sub.isTrialing && activeTab != _settingsTab) {
+          return TrialBanner(plan: plan, child: stack);
+        }
+
+        return stack;
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RailNavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _RailNavItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color:
+              isActive ? AppTheme.blue.withValues(alpha: 0.12) : AppTheme.bg3,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isActive
+                ? AppTheme.blue.withValues(alpha: 0.45)
+                : AppTheme.border2,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              size: 21,
+              color: isActive ? AppTheme.blue : AppTheme.textMuted,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 10,
+                color: isActive ? AppTheme.blue : AppTheme.textMuted,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
         ),
       ),
     );

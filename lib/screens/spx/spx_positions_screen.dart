@@ -15,11 +15,30 @@ class SpxPositionsScreen extends StatelessWidget {
     return BlocBuilder<SpxBloc, SpxState>(
       builder: (context, state) {
         if (state.positions.isEmpty) return const _EmptyPositions();
-        return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: state.positions.length,
-          itemBuilder: (context, i) =>
-              _PositionCard(position: state.positions[i]),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 920;
+            if (!wide) {
+              return ListView.builder(
+                padding: const EdgeInsets.all(10),
+                itemCount: state.positions.length,
+                itemBuilder: (context, i) =>
+                    _PositionCard(position: state.positions[i]),
+              );
+            }
+            return GridView.builder(
+              padding: const EdgeInsets.all(12),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                mainAxisExtent: 322,
+              ),
+              itemCount: state.positions.length,
+              itemBuilder: (context, i) =>
+                  _PositionCard(position: state.positions[i]),
+            );
+          },
         );
       },
     );

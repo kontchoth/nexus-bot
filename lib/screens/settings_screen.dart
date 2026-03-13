@@ -479,233 +479,417 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: _loadingPrefs
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(14),
-              children: [
-                _SectionCard(
-                  title: 'Account',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        user?.displayName ?? 'Trader',
-                        style: GoogleFonts.syne(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        user?.email ?? 'No email',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            context
-                                .read<AuthBloc>()
-                                .add(const AuthSignOutRequested());
-                            Navigator.of(context).pop();
-                          },
-                          icon: const Icon(Icons.logout_rounded),
-                          label: const Text('Sign out'),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const WalletScreen(),
-                            ),
-                          ),
-                          icon:
-                              const Icon(Icons.account_balance_wallet_outlined),
-                          label: const Text('Manage wallet'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'Security',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        user?.mfaEnabled == true
-                            ? 'MFA status: Enabled'
-                            : 'MFA status: Not enabled',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: user?.mfaEnabled == true
-                              ? AppTheme.green
-                              : AppTheme.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Phone: ${((user?.phoneNumber ?? '').isEmpty) ? 'Not set' : user!.phoneNumber}',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 11,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: (user?.mfaEnabled == true || _mfaLoading)
-                              ? null
-                              : _enableMfa,
-                          icon: const Icon(Icons.verified_user_outlined),
-                          label: Text(
-                            _mfaLoading ? 'Sending code...' : 'Enable MFA',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'SPX Options — Tradier API',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Choose the Tradier environment, then save the matching token. Sandbox and production tokens are stored separately.',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 11,
-                          height: 1.45,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _SelectCard<String>(
-                        label: 'Environment',
-                        value: _spxTradierEnvironment,
-                        items: const [
-                          SpxTradierEnvironment.sandbox,
-                          SpxTradierEnvironment.production,
-                        ],
-                        itemLabel: (env) => SpxTradierEnvironment.label(env),
-                        onChanged: (env) {
-                          if (env == null) return;
-                          _setTradierEnvironment(env);
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _spxTradierEnvironment == SpxTradierEnvironment.sandbox
-                            ? 'Testing endpoint: sandbox.tradier.com'
-                            : 'Live endpoint: api.tradier.com',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textDim,
-                          fontSize: 10,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: _tokenController,
-                        obscureText: _tokenObscured,
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textPrimary,
-                          fontSize: 12,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'paste token here…',
-                          hintStyle: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textDim,
-                            fontSize: 12,
-                          ),
-                          filled: true,
-                          fillColor: AppTheme.bg3,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(6),
-                            borderSide:
-                                const BorderSide(color: AppTheme.border2),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(6),
-                            borderSide:
-                                const BorderSide(color: AppTheme.border2),
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _tokenObscured
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              size: 18,
-                              color: AppTheme.textMuted,
-                            ),
-                            onPressed: () => setState(
-                                () => _tokenObscured = !_tokenObscured),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _tokenSaving ? null : _saveToken,
-                          icon: _tokenSaving
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Icon(Icons.save_outlined, size: 16),
-                          label: Text(
-                            _tokenSaving
-                                ? 'Saving…'
-                                : 'Save ${SpxTradierEnvironment.label(_spxTradierEnvironment)} token',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
+          : Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: ListView(
+                  padding: const EdgeInsets.all(14),
+                  children: [
+                    _SectionCard(
+                      title: 'Account',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.info_outline,
-                              size: 12, color: AppTheme.textDim),
-                          const SizedBox(width: 5),
-                          Expanded(
-                            child: Text(
-                              'Get a free token at tradier.com → API Access. Switch to Sandbox for paper testing before using Production.',
-                              style: GoogleFonts.spaceGrotesk(
-                                color: AppTheme.textDim,
-                                fontSize: 10,
-                                height: 1.4,
+                          Text(
+                            user?.displayName ?? 'Trader',
+                            style: GoogleFonts.syne(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            user?.email ?? 'No email',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                context
+                                    .read<AuthBloc>()
+                                    .add(const AuthSignOutRequested());
+                                Navigator.of(context).pop();
+                              },
+                              icon: const Icon(Icons.logout_rounded),
+                              label: const Text('Sign out'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const WalletScreen(),
+                                ),
+                              ),
+                              icon: const Icon(
+                                  Icons.account_balance_wallet_outlined),
+                              label: const Text('Manage wallet'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'Security',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user?.mfaEnabled == true
+                                ? 'MFA status: Enabled'
+                                : 'MFA status: Not enabled',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: user?.mfaEnabled == true
+                                  ? AppTheme.green
+                                  : AppTheme.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Phone: ${((user?.phoneNumber ?? '').isEmpty) ? 'Not set' : user!.phoneNumber}',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed:
+                                  (user?.mfaEnabled == true || _mfaLoading)
+                                      ? null
+                                      : _enableMfa,
+                              icon: const Icon(Icons.verified_user_outlined),
+                              label: Text(
+                                _mfaLoading ? 'Sending code...' : 'Enable MFA',
                               ),
                             ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'Crypto Scanner Controls',
-                  child: BlocBuilder<CryptoBloc, CryptoState>(
-                    builder: (context, cryptoState) {
-                      return Column(
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'SPX Options — Tradier API',
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Moved from the top bar for easier access and fewer accidental taps.',
+                            'Choose the Tradier environment, then save the matching token. Sandbox and production tokens are stored separately.',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 11,
+                              height: 1.45,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _SelectCard<String>(
+                            label: 'Environment',
+                            value: _spxTradierEnvironment,
+                            items: const [
+                              SpxTradierEnvironment.sandbox,
+                              SpxTradierEnvironment.production,
+                            ],
+                            itemLabel: (env) =>
+                                SpxTradierEnvironment.label(env),
+                            onChanged: (env) {
+                              if (env == null) return;
+                              _setTradierEnvironment(env);
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            _spxTradierEnvironment ==
+                                    SpxTradierEnvironment.sandbox
+                                ? 'Testing endpoint: sandbox.tradier.com'
+                                : 'Live endpoint: api.tradier.com',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textDim,
+                              fontSize: 10,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _tokenController,
+                            obscureText: _tokenObscured,
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textPrimary,
+                              fontSize: 12,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: 'paste token here…',
+                              hintStyle: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textDim,
+                                fontSize: 12,
+                              ),
+                              filled: true,
+                              fillColor: AppTheme.bg3,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(6),
+                                borderSide:
+                                    const BorderSide(color: AppTheme.border2),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(6),
+                                borderSide:
+                                    const BorderSide(color: AppTheme.border2),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _tokenObscured
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 18,
+                                  color: AppTheme.textMuted,
+                                ),
+                                onPressed: () => setState(
+                                    () => _tokenObscured = !_tokenObscured),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _tokenSaving ? null : _saveToken,
+                              icon: _tokenSaving
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.save_outlined, size: 16),
+                              label: Text(
+                                _tokenSaving
+                                    ? 'Saving…'
+                                    : 'Save ${SpxTradierEnvironment.label(_spxTradierEnvironment)} token',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Icon(Icons.info_outline,
+                                  size: 12, color: AppTheme.textDim),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  'Get a free token at tradier.com → API Access. Switch to Sandbox for paper testing before using Production.',
+                                  style: GoogleFonts.spaceGrotesk(
+                                    color: AppTheme.textDim,
+                                    fontSize: 10,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'Crypto Scanner Controls',
+                      child: BlocBuilder<CryptoBloc, CryptoState>(
+                        builder: (context, cryptoState) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Moved from the top bar for easier access and fewer accidental taps.',
+                                style: GoogleFonts.spaceGrotesk(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 11,
+                                  height: 1.4,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _SelectCard<CryptoDataProvider>(
+                                label: 'Data Source',
+                                value: _cryptoDataProvider,
+                                items: CryptoDataProvider.values,
+                                itemLabel: (p) => p.label,
+                                onChanged: (p) {
+                                  if (p == null) return;
+                                  _setCryptoProvider(p);
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              if (_cryptoDataProvider ==
+                                  CryptoDataProvider.robinhood)
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.bg3,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: AppTheme.border2),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Robinhood Crypto Token',
+                                        style: GoogleFonts.spaceGrotesk(
+                                          color: AppTheme.textMuted,
+                                          fontSize: 10,
+                                          letterSpacing: 0.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      TextField(
+                                        controller: _robinhoodTokenController,
+                                        obscureText: _robinhoodTokenObscured,
+                                        style: GoogleFonts.spaceGrotesk(
+                                          color: AppTheme.textPrimary,
+                                          fontSize: 12,
+                                        ),
+                                        decoration: InputDecoration(
+                                          isDense: true,
+                                          hintText: 'paste robinhood token…',
+                                          hintStyle: GoogleFonts.spaceGrotesk(
+                                            color: AppTheme.textDim,
+                                            fontSize: 11,
+                                          ),
+                                          filled: true,
+                                          fillColor: AppTheme.bg2,
+                                          border: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            borderSide: const BorderSide(
+                                              color: AppTheme.border2,
+                                            ),
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            borderSide: const BorderSide(
+                                              color: AppTheme.border2,
+                                            ),
+                                          ),
+                                          suffixIcon: IconButton(
+                                            icon: Icon(
+                                              _robinhoodTokenObscured
+                                                  ? Icons.visibility_outlined
+                                                  : Icons
+                                                      .visibility_off_outlined,
+                                              size: 18,
+                                              color: AppTheme.textMuted,
+                                            ),
+                                            onPressed: () => setState(
+                                              () => _robinhoodTokenObscured =
+                                                  !_robinhoodTokenObscured,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: ElevatedButton.icon(
+                                          onPressed: _robinhoodTokenSaving
+                                              ? null
+                                              : _saveRobinhoodToken,
+                                          icon: _robinhoodTokenSaving
+                                              ? const SizedBox(
+                                                  width: 14,
+                                                  height: 14,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                )
+                                              : const Icon(
+                                                  Icons.save_outlined,
+                                                  size: 16,
+                                                ),
+                                          label: Text(
+                                            _robinhoodTokenSaving
+                                                ? 'Saving…'
+                                                : 'Save Robinhood token',
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Default remains Binance unless you switch Data Source to Robinhood.',
+                                        style: GoogleFonts.spaceGrotesk(
+                                          color: AppTheme.textDim,
+                                          fontSize: 10,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (_cryptoDataProvider ==
+                                  CryptoDataProvider.robinhood)
+                                const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _SelectCard<Exchange>(
+                                      label: 'Exchange',
+                                      value: cryptoState.selectedExchange,
+                                      items: Exchange.values,
+                                      itemLabel: (e) =>
+                                          e == Exchange.all ? 'All' : e.label,
+                                      onChanged: (e) {
+                                        if (e == null) return;
+                                        context
+                                            .read<CryptoBloc>()
+                                            .add(ChangeExchange(e));
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: _SelectCard<Timeframe>(
+                                      label: 'Timeframe',
+                                      value: cryptoState.selectedTimeframe,
+                                      items: Timeframe.values,
+                                      itemLabel: (t) => t.label,
+                                      onChanged: (t) {
+                                        if (t == null) return;
+                                        context
+                                            .read<CryptoBloc>()
+                                            .add(ChangeTimeframe(t));
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'SPX Terms (DTE)',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Choose an exact DTE or a DTE range for SPX expirations.',
                             style: GoogleFonts.spaceGrotesk(
                               color: AppTheme.textMuted,
                               fontSize: 11,
@@ -713,459 +897,295 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          _SelectCard<CryptoDataProvider>(
-                            label: 'Data Source',
-                            value: _cryptoDataProvider,
-                            items: CryptoDataProvider.values,
-                            itemLabel: (p) => p.label,
-                            onChanged: (p) {
-                              if (p == null) return;
-                              _setCryptoProvider(p);
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          if (_cryptoDataProvider ==
-                              CryptoDataProvider.robinhood)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: AppTheme.bg3,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: AppTheme.border2),
+                          SegmentedButton<SpxTermMode>(
+                            segments: const [
+                              ButtonSegment<SpxTermMode>(
+                                value: SpxTermMode.exact,
+                                label: Text('Exact DTE'),
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Robinhood Crypto Token',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textMuted,
-                                      fontSize: 10,
-                                      letterSpacing: 0.8,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: _robinhoodTokenController,
-                                    obscureText: _robinhoodTokenObscured,
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textPrimary,
-                                      fontSize: 12,
-                                    ),
-                                    decoration: InputDecoration(
-                                      isDense: true,
-                                      hintText: 'paste robinhood token…',
-                                      hintStyle: GoogleFonts.spaceGrotesk(
-                                        color: AppTheme.textDim,
-                                        fontSize: 11,
-                                      ),
-                                      filled: true,
-                                      fillColor: AppTheme.bg2,
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppTheme.border2,
-                                        ),
-                                      ),
-                                      enabledBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppTheme.border2,
-                                        ),
-                                      ),
-                                      suffixIcon: IconButton(
-                                        icon: Icon(
-                                          _robinhoodTokenObscured
-                                              ? Icons.visibility_outlined
-                                              : Icons.visibility_off_outlined,
-                                          size: 18,
-                                          color: AppTheme.textMuted,
-                                        ),
-                                        onPressed: () => setState(
-                                          () => _robinhoodTokenObscured =
-                                              !_robinhoodTokenObscured,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton.icon(
-                                      onPressed: _robinhoodTokenSaving
-                                          ? null
-                                          : _saveRobinhoodToken,
-                                      icon: _robinhoodTokenSaving
-                                          ? const SizedBox(
-                                              width: 14,
-                                              height: 14,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.save_outlined,
-                                              size: 16,
-                                            ),
-                                      label: Text(
-                                        _robinhoodTokenSaving
-                                            ? 'Saving…'
-                                            : 'Save Robinhood token',
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Default remains Binance unless you switch Data Source to Robinhood.',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.textDim,
-                                      fontSize: 10,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (_cryptoDataProvider ==
-                              CryptoDataProvider.robinhood)
-                            const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _SelectCard<Exchange>(
-                                  label: 'Exchange',
-                                  value: cryptoState.selectedExchange,
-                                  items: Exchange.values,
-                                  itemLabel: (e) =>
-                                      e == Exchange.all ? 'All' : e.label,
-                                  onChanged: (e) {
-                                    if (e == null) return;
-                                    context
-                                        .read<CryptoBloc>()
-                                        .add(ChangeExchange(e));
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: _SelectCard<Timeframe>(
-                                  label: 'Timeframe',
-                                  value: cryptoState.selectedTimeframe,
-                                  items: Timeframe.values,
-                                  itemLabel: (t) => t.label,
-                                  onChanged: (t) {
-                                    if (t == null) return;
-                                    context
-                                        .read<CryptoBloc>()
-                                        .add(ChangeTimeframe(t));
-                                  },
-                                ),
+                              ButtonSegment<SpxTermMode>(
+                                value: SpxTermMode.range,
+                                label: Text('DTE Range'),
                               ),
                             ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'SPX Terms (DTE)',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Choose an exact DTE or a DTE range for SPX expirations.',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 11,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      SegmentedButton<SpxTermMode>(
-                        segments: const [
-                          ButtonSegment<SpxTermMode>(
-                            value: SpxTermMode.exact,
-                            label: Text('Exact DTE'),
-                          ),
-                          ButtonSegment<SpxTermMode>(
-                            value: SpxTermMode.range,
-                            label: Text('DTE Range'),
-                          ),
-                        ],
-                        selected: {_spxTermMode},
-                        onSelectionChanged: (selection) {
-                          final selected = selection.first;
-                          setState(() => _spxTermMode = selected);
-                          _pushSpxTermFilter();
-                          _persistPrefs();
-                        },
-                        style: ButtonStyle(
-                          visualDensity: VisualDensity.compact,
-                          textStyle: WidgetStatePropertyAll(
-                            GoogleFonts.spaceGrotesk(fontSize: 11),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      if (_spxTermMode == SpxTermMode.exact)
-                        _DteStepper(
-                          label: 'Exact DTE',
-                          value: _spxExactDte,
-                          onMinus: () => _setExactDte(_spxExactDte - 1),
-                          onPlus: () => _setExactDte(_spxExactDte + 1),
-                        )
-                      else
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _DteStepper(
-                                label: 'Min DTE',
-                                value: _spxMinDte,
-                                onMinus: () =>
-                                    _setRange(minDte: _spxMinDte - 1),
-                                onPlus: () => _setRange(minDte: _spxMinDte + 1),
+                            selected: {_spxTermMode},
+                            onSelectionChanged: (selection) {
+                              final selected = selection.first;
+                              setState(() => _spxTermMode = selected);
+                              _pushSpxTermFilter();
+                              _persistPrefs();
+                            },
+                            style: ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              textStyle: WidgetStatePropertyAll(
+                                GoogleFonts.spaceGrotesk(fontSize: 11),
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _DteStepper(
-                                label: 'Max DTE',
-                                value: _spxMaxDte,
-                                onMinus: () =>
-                                    _setRange(maxDte: _spxMaxDte - 1),
-                                onPlus: () => _setRange(maxDte: _spxMaxDte + 1),
-                              ),
+                          ),
+                          const SizedBox(height: 10),
+                          if (_spxTermMode == SpxTermMode.exact)
+                            _DteStepper(
+                              label: 'Exact DTE',
+                              value: _spxExactDte,
+                              onMinus: () => _setExactDte(_spxExactDte - 1),
+                              onPlus: () => _setExactDte(_spxExactDte + 1),
+                            )
+                          else
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _DteStepper(
+                                    label: 'Min DTE',
+                                    value: _spxMinDte,
+                                    onMinus: () =>
+                                        _setRange(minDte: _spxMinDte - 1),
+                                    onPlus: () =>
+                                        _setRange(minDte: _spxMinDte + 1),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _DteStepper(
+                                    label: 'Max DTE',
+                                    value: _spxMaxDte,
+                                    onMinus: () =>
+                                        _setRange(maxDte: _spxMaxDte - 1),
+                                    onPlus: () =>
+                                        _setRange(maxDte: _spxMaxDte + 1),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'SPX Contract Targeting',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Choose which part of the chain the dashboard and auto-scanner should prefer first.',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 11,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _SelectCard<String>(
-                        label: 'Targeting',
-                        value: _spxContractTargetingMode,
-                        items: const [
-                          SpxContractTargetingMode.deltaZone,
-                          SpxContractTargetingMode.atm,
-                          SpxContractTargetingMode.nearItm,
-                          SpxContractTargetingMode.nearOtm,
-                          SpxContractTargetingMode.atmOrNearItm,
                         ],
-                        itemLabel: (mode) =>
-                            SpxContractTargetingMode.label(mode),
-                        onChanged: (mode) {
-                          if (mode == null) return;
-                          _setSpxContractTargetingMode(mode);
-                        },
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _spxContractTargetingMode ==
-                                SpxContractTargetingMode.deltaZone
-                            ? 'Current behavior: prefer liquid contracts near the target delta range.'
-                            : _spxContractTargetingMode ==
-                                    SpxContractTargetingMode.atm
-                                ? 'Prefer the strike closest to spot price.'
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'SPX Contract Targeting',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Choose which part of the chain the dashboard and auto-scanner should prefer first.',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _SelectCard<String>(
+                            label: 'Targeting',
+                            value: _spxContractTargetingMode,
+                            items: const [
+                              SpxContractTargetingMode.deltaZone,
+                              SpxContractTargetingMode.atm,
+                              SpxContractTargetingMode.nearItm,
+                              SpxContractTargetingMode.nearOtm,
+                              SpxContractTargetingMode.atmOrNearItm,
+                            ],
+                            itemLabel: (mode) =>
+                                SpxContractTargetingMode.label(mode),
+                            onChanged: (mode) {
+                              if (mode == null) return;
+                              _setSpxContractTargetingMode(mode);
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _spxContractTargetingMode ==
+                                    SpxContractTargetingMode.deltaZone
+                                ? 'Current behavior: prefer liquid contracts near the target delta range.'
                                 : _spxContractTargetingMode ==
-                                        SpxContractTargetingMode.nearItm
-                                    ? 'Prefer the first shallow in-the-money strikes.'
+                                        SpxContractTargetingMode.atm
+                                    ? 'Prefer the strike closest to spot price.'
                                     : _spxContractTargetingMode ==
-                                            SpxContractTargetingMode.nearOtm
-                                        ? 'Prefer the first shallow out-of-the-money strikes.'
-                                        : 'Prefer ATM first, then shallow ITM strikes.',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textDim,
-                          fontSize: 10,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'SPX Entry Controls',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Choose whether entries require approval, execute after a delay, or execute immediately.',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textMuted,
-                          fontSize: 11,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment<String>(
-                            value: SpxOpportunityExecutionMode.manualConfirm,
-                            label: Text('Manual Confirm'),
-                          ),
-                          ButtonSegment<String>(
-                            value: SpxOpportunityExecutionMode.autoAfterDelay,
-                            label: Text('Auto + Delay'),
-                          ),
-                          ButtonSegment<String>(
-                            value: SpxOpportunityExecutionMode.autoImmediate,
-                            label: Text('Auto Now'),
+                                            SpxContractTargetingMode.nearItm
+                                        ? 'Prefer the first shallow in-the-money strikes.'
+                                        : _spxContractTargetingMode ==
+                                                SpxContractTargetingMode.nearOtm
+                                            ? 'Prefer the first shallow out-of-the-money strikes.'
+                                            : 'Prefer ATM first, then shallow ITM strikes.',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textDim,
+                              fontSize: 10,
+                              height: 1.35,
+                            ),
                           ),
                         ],
-                        selected: {_spxExecutionMode},
-                        onSelectionChanged: (selection) {
-                          _setSpxExecutionMode(selection.first);
-                        },
-                        style: ButtonStyle(
-                          visualDensity: VisualDensity.compact,
-                          textStyle: WidgetStatePropertyAll(
-                            GoogleFonts.spaceGrotesk(fontSize: 11),
-                          ),
-                        ),
                       ),
-                      const SizedBox(height: 10),
-                      if (_spxExecutionMode ==
-                          SpxOpportunityExecutionMode.autoAfterDelay)
-                        _DteStepper(
-                          label: 'Entry Delay (sec)',
-                          value: _spxEntryDelaySeconds,
-                          onMinus: () => _setSpxEntryDelaySeconds(
-                              _spxEntryDelaySeconds - 5),
-                          onPlus: () => _setSpxEntryDelaySeconds(
-                              _spxEntryDelaySeconds + 5),
-                        ),
-                      if (_spxExecutionMode ==
-                          SpxOpportunityExecutionMode.manualConfirm)
-                        _DteStepper(
-                          label: 'Validation Window (sec)',
-                          value: _spxValidationWindowSeconds,
-                          onMinus: () => _setSpxValidationWindowSeconds(
-                            _spxValidationWindowSeconds - 5,
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'SPX Entry Controls',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Choose whether entries require approval, execute after a delay, or execute immediately.',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textMuted,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
                           ),
-                          onPlus: () => _setSpxValidationWindowSeconds(
-                            _spxValidationWindowSeconds + 5,
+                          const SizedBox(height: 10),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment<String>(
+                                value:
+                                    SpxOpportunityExecutionMode.manualConfirm,
+                                label: Text('Manual Confirm'),
+                              ),
+                              ButtonSegment<String>(
+                                value:
+                                    SpxOpportunityExecutionMode.autoAfterDelay,
+                                label: Text('Auto + Delay'),
+                              ),
+                              ButtonSegment<String>(
+                                value:
+                                    SpxOpportunityExecutionMode.autoImmediate,
+                                label: Text('Auto Now'),
+                              ),
+                            ],
+                            selected: {_spxExecutionMode},
+                            onSelectionChanged: (selection) {
+                              _setSpxExecutionMode(selection.first);
+                            },
+                            style: ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              textStyle: WidgetStatePropertyAll(
+                                GoogleFonts.spaceGrotesk(fontSize: 11),
+                              ),
+                            ),
                           ),
-                        ),
-                      if (_spxExecutionMode ==
-                          SpxOpportunityExecutionMode.autoImmediate)
-                        Text(
-                          'Auto Now mode executes immediately after guard checks.',
-                          style: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textDim,
-                            fontSize: 10,
+                          const SizedBox(height: 10),
+                          if (_spxExecutionMode ==
+                              SpxOpportunityExecutionMode.autoAfterDelay)
+                            _DteStepper(
+                              label: 'Entry Delay (sec)',
+                              value: _spxEntryDelaySeconds,
+                              onMinus: () => _setSpxEntryDelaySeconds(
+                                  _spxEntryDelaySeconds - 5),
+                              onPlus: () => _setSpxEntryDelaySeconds(
+                                  _spxEntryDelaySeconds + 5),
+                            ),
+                          if (_spxExecutionMode ==
+                              SpxOpportunityExecutionMode.manualConfirm)
+                            _DteStepper(
+                              label: 'Validation Window (sec)',
+                              value: _spxValidationWindowSeconds,
+                              onMinus: () => _setSpxValidationWindowSeconds(
+                                _spxValidationWindowSeconds - 5,
+                              ),
+                              onPlus: () => _setSpxValidationWindowSeconds(
+                                _spxValidationWindowSeconds + 5,
+                              ),
+                            ),
+                          if (_spxExecutionMode ==
+                              SpxOpportunityExecutionMode.autoImmediate)
+                            Text(
+                              'Auto Now mode executes immediately after guard checks.',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textDim,
+                                fontSize: 10,
+                              ),
+                            ),
+                          const SizedBox(height: 10),
+                          Text(
+                            'Max allowed slippage: ${_spxMaxSlippagePct.toStringAsFixed(1)}%',
+                            style: GoogleFonts.spaceGrotesk(
+                              color: AppTheme.textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Max allowed slippage: ${_spxMaxSlippagePct.toStringAsFixed(1)}%',
-                        style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
+                          Slider(
+                            value: _spxMaxSlippagePct,
+                            min: 0.1,
+                            max: 25.0,
+                            divisions: 249,
+                            label: '${_spxMaxSlippagePct.toStringAsFixed(1)}%',
+                            onChanged: (value) =>
+                                _setSpxMaxSlippagePct(value, persist: false),
+                            onChangeEnd: _setSpxMaxSlippagePct,
+                          ),
+                        ],
                       ),
-                      Slider(
-                        value: _spxMaxSlippagePct,
-                        min: 0.1,
-                        max: 25.0,
-                        divisions: 249,
-                        label: '${_spxMaxSlippagePct.toStringAsFixed(1)}%',
-                        onChanged: (value) =>
-                            _setSpxMaxSlippagePct(value, persist: false),
-                        onChangeEnd: _setSpxMaxSlippagePct,
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'Preferences',
+                      child: Column(
+                        children: [
+                          SwitchListTile(
+                            value: _alertsEnabled,
+                            onChanged: (v) {
+                              setState(() => _alertsEnabled = v);
+                              _tradingBloc?.add(
+                                UpdateAlertPreferences(
+                                  alertsEnabled: _alertsEnabled,
+                                  hapticsEnabled: _hapticsEnabled,
+                                ),
+                              );
+                              _pushSpxExecutionSettings();
+                              unawaited(
+                                RemotePushService.instance
+                                    .updateAlertsPreference(
+                                  alertsEnabled: _alertsEnabled,
+                                ),
+                              );
+                              _persistPrefs();
+                            },
+                            title: Text(
+                              'Trade Alerts',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textPrimary,
+                                fontSize: 13,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Notifications for buy/sell events',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textMuted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                          const Divider(color: AppTheme.border),
+                          SwitchListTile(
+                            value: _hapticsEnabled,
+                            onChanged: (v) {
+                              setState(() => _hapticsEnabled = v);
+                              _tradingBloc?.add(
+                                UpdateAlertPreferences(
+                                  alertsEnabled: _alertsEnabled,
+                                  hapticsEnabled: _hapticsEnabled,
+                                ),
+                              );
+                              _persistPrefs();
+                            },
+                            title: Text(
+                              'Haptic Feedback',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textPrimary,
+                                fontSize: 13,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Enable vibration on key actions',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textMuted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _SectionCard(
-                  title: 'Preferences',
-                  child: Column(
-                    children: [
-                      SwitchListTile(
-                        value: _alertsEnabled,
-                        onChanged: (v) {
-                          setState(() => _alertsEnabled = v);
-                          _tradingBloc?.add(
-                            UpdateAlertPreferences(
-                              alertsEnabled: _alertsEnabled,
-                              hapticsEnabled: _hapticsEnabled,
-                            ),
-                          );
-                          _pushSpxExecutionSettings();
-                          unawaited(
-                            RemotePushService.instance.updateAlertsPreference(
-                              alertsEnabled: _alertsEnabled,
-                            ),
-                          );
-                          _persistPrefs();
-                        },
-                        title: Text(
-                          'Trade Alerts',
-                          style: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textPrimary,
-                            fontSize: 13,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Notifications for buy/sell events',
-                          style: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textMuted,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                      const Divider(color: AppTheme.border),
-                      SwitchListTile(
-                        value: _hapticsEnabled,
-                        onChanged: (v) {
-                          setState(() => _hapticsEnabled = v);
-                          _tradingBloc?.add(
-                            UpdateAlertPreferences(
-                              alertsEnabled: _alertsEnabled,
-                              hapticsEnabled: _hapticsEnabled,
-                            ),
-                          );
-                          _persistPrefs();
-                        },
-                        title: Text(
-                          'Haptic Feedback',
-                          style: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textPrimary,
-                            fontSize: 13,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Enable vibration on key actions',
-                          style: GoogleFonts.spaceGrotesk(
-                            color: AppTheme.textMuted,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:uuid/uuid.dart';
 import '../../models/crypto_models.dart';
+import '../../services/crypto/crypto_opportunity_service.dart';
 import '../../services/crypto/live_market_service.dart';
 import '../../services/crypto/market_simulator.dart';
 import '../../services/crypto/robinhood_market_service.dart';
@@ -14,26 +15,43 @@ const _uuid = Uuid();
 
 class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
   Timer? _marketTimer;
+  Timer? _opportunityTimer;
   int _tickCount = 0;
-  final LiveMarketService _binanceMarketService = LiveMarketService();
-  final RobinhoodMarketService _robinhoodMarketService =
-      RobinhoodMarketService();
+  final LiveMarketService _binanceMarketService;
+  final RobinhoodMarketService _robinhoodMarketService;
+  final CryptoOpportunityService _opportunityService;
+  final Duration _opportunityRefreshInterval;
   final _alertController = StreamController<TradeAlert>.broadcast();
   bool _useLiveData = true;
   bool _tickInFlight = false;
+  bool _opportunitiesInFlight = false;
   bool _liveErrorLogged = false;
   String? _robinhoodToken;
 
   Stream<TradeAlert> get alertsStream => _alertController.stream;
 
-  CryptoBloc() : super(CryptoState.initial()) {
+  CryptoBloc({
+    LiveMarketService? binanceMarketService,
+    RobinhoodMarketService? robinhoodMarketService,
+    CryptoOpportunityService? opportunityService,
+    Duration opportunityRefreshInterval = const Duration(minutes: 5),
+  })  : _binanceMarketService = binanceMarketService ?? LiveMarketService(),
+        _robinhoodMarketService =
+            robinhoodMarketService ?? RobinhoodMarketService(),
+        _opportunityService = opportunityService ?? CryptoOpportunityService(),
+        _opportunityRefreshInterval = opportunityRefreshInterval,
+        super(CryptoState.initial()) {
     on<InitializeMarket>(_onInitialize);
     on<MarketTick>(_onMarketTick);
+    on<LoadCryptoOpportunities>(_onLoadCryptoOpportunities);
+    on<RefreshCryptoOpportunities>(_onRefreshCryptoOpportunities);
     on<ToggleBot>(_onToggleBot);
     on<BuyCoin>(_onBuyCoin);
     on<SellPosition>(_onSellPosition);
     on<SelectCoin>(_onSelectCoin);
+    on<SelectCryptoOpportunity>(_onSelectCryptoOpportunity);
     on<ChangeExchange>(_onChangeExchange);
+    on<ChangeCryptoScannerView>(_onChangeCryptoScannerView);
     on<ChangeTimeframe>(_onChangeTimeframe);
     on<UpdateCapital>(_onUpdateCapital);
     on<UpdateAlertPreferences>(_onUpdateAlertPreferences);
@@ -55,7 +73,8 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     try {
       coins = await _fetchInitialFromSelectedProvider(state);
       _useLiveData = true;
-      _addLog('🟢 Live market mode enabled ($providerLabel)', TradeLogType.system);
+      _addLog(
+          '🟢 Live market mode enabled ($providerLabel)', TradeLogType.system);
     } catch (_) {
       coins = MarketSimulator.generateInitialCoins();
       _useLiveData = false;
@@ -83,6 +102,8 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
         TradeLogType.system);
 
     _startMarketTimer();
+    _startOpportunityTimer();
+    add(LoadCryptoOpportunities());
   }
 
   Future<void> _onMarketTick(
@@ -356,9 +377,33 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     ));
   }
 
+  void _onSelectCryptoOpportunity(
+    SelectCryptoOpportunity event,
+    Emitter<CryptoState> emit,
+  ) {
+    final shouldClear = event.opportunityId == null ||
+        event.opportunityId == state.selectedOpportunityId;
+    emit(state.copyWith(
+      selectedOpportunityId: shouldClear ? null : event.opportunityId,
+      clearSelectedOpportunityId: shouldClear,
+    ));
+  }
+
   void _onChangeExchange(ChangeExchange event, Emitter<CryptoState> emit) {
     emit(state.copyWith(selectedExchange: event.exchange));
     _addLog('🔄 Switched to ${event.exchange.label}', TradeLogType.info);
+  }
+
+  void _onChangeCryptoScannerView(
+    ChangeCryptoScannerView event,
+    Emitter<CryptoState> emit,
+  ) {
+    emit(state.copyWith(scannerViewMode: event.viewMode));
+    if (event.viewMode == CryptoScannerViewMode.opportunities &&
+        state.opportunities.isEmpty &&
+        !state.opportunitiesLoading) {
+      add(LoadCryptoOpportunities());
+    }
   }
 
   void _onChangeTimeframe(ChangeTimeframe event, Emitter<CryptoState> emit) {
@@ -421,6 +466,20 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     _addLog('🔄 Daily stats reset', TradeLogType.system);
   }
 
+  Future<void> _onLoadCryptoOpportunities(
+    LoadCryptoOpportunities event,
+    Emitter<CryptoState> emit,
+  ) async {
+    await _refreshOpportunities(emit, forceRefresh: false);
+  }
+
+  Future<void> _onRefreshCryptoOpportunities(
+    RefreshCryptoOpportunities event,
+    Emitter<CryptoState> emit,
+  ) async {
+    await _refreshOpportunities(emit, forceRefresh: true);
+  }
+
   Future<List<CoinData>> _fetchInitialFromSelectedProvider(
     CryptoState snapshot,
   ) async {
@@ -428,7 +487,8 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
       if ((_robinhoodToken ?? '').isEmpty) {
         throw StateError('Robinhood token is missing');
       }
-      return _robinhoodMarketService.fetchInitialCoins(snapshot.selectedTimeframe);
+      return _robinhoodMarketService
+          .fetchInitialCoins(snapshot.selectedTimeframe);
     }
     return _binanceMarketService.fetchInitialCoins(snapshot.selectedTimeframe);
   }
@@ -452,6 +512,77 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
     _marketTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
       add(MarketTick());
     });
+  }
+
+  void _startOpportunityTimer() {
+    _opportunityTimer?.cancel();
+    _opportunityTimer = Timer.periodic(_opportunityRefreshInterval, (_) {
+      add(RefreshCryptoOpportunities());
+    });
+  }
+
+  Future<void> _refreshOpportunities(
+    Emitter<CryptoState> emit, {
+    required bool forceRefresh,
+  }) async {
+    if (_opportunitiesInFlight) return;
+    _opportunitiesInFlight = true;
+    emit(state.copyWith(
+      opportunitiesLoading: true,
+      clearOpportunitiesError: true,
+    ));
+
+    try {
+      final opportunities = await _opportunityService.loadOpportunities(
+        forceRefresh: forceRefresh,
+        scannerCoins: state.coins,
+        useScannerConfirmation:
+            state.marketProvider == CryptoDataProvider.binance,
+      );
+      final selectedId = _resolveSelectedOpportunityId(opportunities);
+      emit(state.copyWith(
+        opportunities: opportunities,
+        opportunitiesLoading: false,
+        selectedOpportunityId: selectedId,
+        opportunitiesUpdatedAt: DateTime.now(),
+        clearSelectedOpportunityId: opportunities.isEmpty,
+        clearOpportunitiesError: true,
+      ));
+    } catch (error) {
+      emit(state.copyWith(
+        opportunitiesLoading: false,
+        opportunitiesError: _formatOpportunitiesError(error),
+      ));
+    } finally {
+      _opportunitiesInFlight = false;
+    }
+  }
+
+  String? _resolveSelectedOpportunityId(
+    List<CryptoOpportunity> opportunities,
+  ) {
+    if (opportunities.isEmpty) return null;
+    final currentSelection = state.selectedOpportunityId;
+    if (currentSelection != null &&
+        opportunities
+            .any((opportunity) => opportunity.id == currentSelection)) {
+      return currentSelection;
+    }
+    return opportunities.first.id;
+  }
+
+  String _formatOpportunitiesError(Object error) {
+    final raw = error.toString();
+    if (raw.startsWith('Exception: ')) {
+      return raw.substring('Exception: '.length);
+    }
+    if (raw.startsWith('StateError: ')) {
+      return raw.substring('StateError: '.length);
+    }
+    if (raw.startsWith('Bad state: ')) {
+      return raw.substring('Bad state: '.length);
+    }
+    return raw;
   }
 
   void _addLog(String message, TradeLogType type) {
@@ -484,6 +615,7 @@ class CryptoBloc extends Bloc<CryptoEvent, CryptoState> {
   @override
   Future<void> close() {
     _marketTimer?.cancel();
+    _opportunityTimer?.cancel();
     _alertController.close();
     return super.close();
   }

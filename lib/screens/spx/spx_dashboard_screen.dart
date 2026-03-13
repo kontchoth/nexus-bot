@@ -153,37 +153,42 @@ class _StatsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 2.2,
-      crossAxisSpacing: 1,
-      mainAxisSpacing: 1,
-      children: [
-        StatBox(
-          label: 'Total Trades',
-          value: '${state.totalTrades}',
-          valueColor: AppTheme.blue,
-        ),
-        StatBox(
-          label: 'Win Rate',
-          value: state.totalTrades == 0
-              ? '—'
-              : '${state.winRate.toStringAsFixed(0)}%',
-          valueColor: AppTheme.gold,
-        ),
-        StatBox(
-          label: 'Open Positions',
-          value: '${state.positions.length}',
-          valueColor: AppTheme.textPrimary,
-        ),
-        StatBox(
-          label: 'Buy Signals',
-          value: '${state.buySignals.length}',
-          valueColor: AppTheme.green,
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+        return GridView.count(
+          crossAxisCount: wide ? 4 : 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: wide ? 1.95 : 2.2,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          children: [
+            StatBox(
+              label: 'Total Trades',
+              value: '${state.totalTrades}',
+              valueColor: AppTheme.blue,
+            ),
+            StatBox(
+              label: 'Win Rate',
+              value: state.totalTrades == 0
+                  ? '—'
+                  : '${state.winRate.toStringAsFixed(0)}%',
+              valueColor: AppTheme.gold,
+            ),
+            StatBox(
+              label: 'Open Positions',
+              value: '${state.positions.length}',
+              valueColor: AppTheme.textPrimary,
+            ),
+            StatBox(
+              label: 'Buy Signals',
+              value: '${state.buySignals.length}',
+              valueColor: AppTheme.green,
+            ),
+          ],
+        );
+      },
     );
   }
 }

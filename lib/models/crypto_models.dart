@@ -4,19 +4,53 @@ export 'common_models.dart';
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
 enum SignalType { buy, sell, watch }
+
 enum MACDTrend { bullish, bearish, neutral }
+
 enum Exchange { all, binance, coinbase, kraken, bybit }
+
 enum CryptoDataProvider { binance, robinhood }
+
 enum Timeframe { m1, m5, m15, h1, h4 }
+
+enum CryptoScannerViewMode { scanner, opportunities }
+
+enum CryptoOpportunitySource {
+  coinGecko,
+  dexScreener,
+  binance,
+  moralis,
+  coinMarketCap,
+}
+
+enum CryptoOpportunityGrade { elite, strong, watch, weak }
+
+enum CryptoOpportunitySignalKind {
+  volumeMarketCap,
+  momentum24h,
+  volumeSpike24h,
+  lowCap,
+  accumulation,
+  freshDexLiquidity,
+  binanceConfirmation,
+  lowLiquidityRisk,
+  missingMarketCapRisk,
+  noCexConfirmationRisk,
+}
 
 extension TimeframeExt on Timeframe {
   String get label {
     switch (this) {
-      case Timeframe.m1:  return '1m';
-      case Timeframe.m5:  return '5m';
-      case Timeframe.m15: return '15m';
-      case Timeframe.h1:  return '1h';
-      case Timeframe.h4:  return '4h';
+      case Timeframe.m1:
+        return '1m';
+      case Timeframe.m5:
+        return '5m';
+      case Timeframe.m15:
+        return '15m';
+      case Timeframe.h1:
+        return '1h';
+      case Timeframe.h4:
+        return '4h';
     }
   }
 }
@@ -24,11 +58,16 @@ extension TimeframeExt on Timeframe {
 extension ExchangeExt on Exchange {
   String get label {
     switch (this) {
-      case Exchange.all:      return 'All Exchanges';
-      case Exchange.binance:  return 'Binance';
-      case Exchange.coinbase: return 'Coinbase';
-      case Exchange.kraken:   return 'Kraken';
-      case Exchange.bybit:    return 'Bybit';
+      case Exchange.all:
+        return 'All Exchanges';
+      case Exchange.binance:
+        return 'Binance';
+      case Exchange.coinbase:
+        return 'Coinbase';
+      case Exchange.kraken:
+        return 'Kraken';
+      case Exchange.bybit:
+        return 'Bybit';
     }
   }
 }
@@ -42,6 +81,201 @@ extension CryptoDataProviderExt on CryptoDataProvider {
         return 'Robinhood Crypto';
     }
   }
+}
+
+extension CryptoScannerViewModeExt on CryptoScannerViewMode {
+  String get label {
+    switch (this) {
+      case CryptoScannerViewMode.scanner:
+        return 'Scanner';
+      case CryptoScannerViewMode.opportunities:
+        return 'Opportunities';
+    }
+  }
+}
+
+extension CryptoOpportunitySourceExt on CryptoOpportunitySource {
+  String get label {
+    switch (this) {
+      case CryptoOpportunitySource.coinGecko:
+        return 'CoinGecko';
+      case CryptoOpportunitySource.dexScreener:
+        return 'DEX';
+      case CryptoOpportunitySource.binance:
+        return 'Binance';
+      case CryptoOpportunitySource.moralis:
+        return 'Moralis';
+      case CryptoOpportunitySource.coinMarketCap:
+        return 'CMC';
+    }
+  }
+}
+
+extension CryptoOpportunityGradeExt on CryptoOpportunityGrade {
+  String get label {
+    switch (this) {
+      case CryptoOpportunityGrade.elite:
+        return 'Elite';
+      case CryptoOpportunityGrade.strong:
+        return 'Strong';
+      case CryptoOpportunityGrade.watch:
+        return 'Watch';
+      case CryptoOpportunityGrade.weak:
+        return 'Weak';
+    }
+  }
+}
+
+class CryptoOpportunitySignal extends Equatable {
+  final CryptoOpportunitySignalKind kind;
+  final String label;
+  final double scoreDelta;
+  final bool isRisk;
+
+  const CryptoOpportunitySignal({
+    required this.kind,
+    required this.label,
+    required this.scoreDelta,
+    this.isRisk = false,
+  });
+
+  @override
+  List<Object?> get props => [kind, label, scoreDelta, isRisk];
+}
+
+class CryptoOpportunityScore extends Equatable {
+  final double value;
+  final CryptoOpportunityGrade grade;
+  final List<CryptoOpportunitySignal> signals;
+
+  const CryptoOpportunityScore({
+    required this.value,
+    required this.grade,
+    required this.signals,
+  });
+
+  List<CryptoOpportunitySignal> get positiveSignals =>
+      signals.where((signal) => !signal.isRisk).toList();
+
+  List<CryptoOpportunitySignal> get riskSignals =>
+      signals.where((signal) => signal.isRisk).toList();
+
+  bool get isActionable => value >= 30;
+
+  @override
+  List<Object?> get props => [value, grade, signals];
+}
+
+class CryptoOpportunity extends Equatable {
+  final String id;
+  final String symbol;
+  final String name;
+  final String? chain;
+  final String? logoUrl;
+  final double priceUsd;
+  final double priceChange24h;
+  final double? marketCap;
+  final double? volume24h;
+  final double? volumeChange24h;
+  final double? liquidityUsd;
+  final double? pairAgeHours;
+  final bool isDex;
+  final bool binanceListed;
+  final double? rsi;
+  final MACDTrend? macdTrend;
+  final List<CryptoOpportunitySource> sources;
+  final DateTime lastUpdated;
+  final CryptoOpportunityScore? score;
+
+  const CryptoOpportunity({
+    required this.id,
+    required this.symbol,
+    required this.name,
+    required this.priceUsd,
+    required this.priceChange24h,
+    required this.sources,
+    required this.lastUpdated,
+    this.chain,
+    this.logoUrl,
+    this.marketCap,
+    this.volume24h,
+    this.volumeChange24h,
+    this.liquidityUsd,
+    this.pairAgeHours,
+    this.isDex = false,
+    this.binanceListed = false,
+    this.rsi,
+    this.macdTrend,
+    this.score,
+  });
+
+  double get volumeMarketCapRatio {
+    final marketCapValue = marketCap ?? 0;
+    final volumeValue = volume24h ?? 0;
+    if (marketCapValue <= 0 || volumeValue <= 0) return 0;
+    return volumeValue / marketCapValue;
+  }
+
+  bool hasSource(CryptoOpportunitySource source) => sources.contains(source);
+
+  CryptoOpportunity copyWith({
+    double? priceUsd,
+    double? priceChange24h,
+    double? marketCap,
+    double? volume24h,
+    double? volumeChange24h,
+    double? liquidityUsd,
+    double? pairAgeHours,
+    bool? isDex,
+    bool? binanceListed,
+    double? rsi,
+    MACDTrend? macdTrend,
+    List<CryptoOpportunitySource>? sources,
+    DateTime? lastUpdated,
+    CryptoOpportunityScore? score,
+  }) {
+    return CryptoOpportunity(
+      id: id,
+      symbol: symbol,
+      name: name,
+      chain: chain,
+      logoUrl: logoUrl,
+      priceUsd: priceUsd ?? this.priceUsd,
+      priceChange24h: priceChange24h ?? this.priceChange24h,
+      marketCap: marketCap ?? this.marketCap,
+      volume24h: volume24h ?? this.volume24h,
+      volumeChange24h: volumeChange24h ?? this.volumeChange24h,
+      liquidityUsd: liquidityUsd ?? this.liquidityUsd,
+      pairAgeHours: pairAgeHours ?? this.pairAgeHours,
+      isDex: isDex ?? this.isDex,
+      binanceListed: binanceListed ?? this.binanceListed,
+      rsi: rsi ?? this.rsi,
+      macdTrend: macdTrend ?? this.macdTrend,
+      sources: sources ?? this.sources,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+      score: score ?? this.score,
+    );
+  }
+
+  @override
+  List<Object?> get props => [
+        id,
+        symbol,
+        priceUsd,
+        priceChange24h,
+        marketCap,
+        volume24h,
+        volumeChange24h,
+        liquidityUsd,
+        pairAgeHours,
+        isDex,
+        binanceListed,
+        rsi,
+        macdTrend,
+        sources,
+        lastUpdated,
+        score,
+      ];
 }
 
 // ── Indicator Model ───────────────────────────────────────────────────────────
@@ -76,7 +310,8 @@ class TechnicalIndicators extends Equatable {
   }
 
   @override
-  List<Object?> get props => [rsi, macd, volumeSpike, bbSqueeze, signalStrength];
+  List<Object?> get props =>
+      [rsi, macd, volumeSpike, bbSqueeze, signalStrength];
 }
 
 // ── Coin Model ────────────────────────────────────────────────────────────────
@@ -132,7 +367,7 @@ class CoinData extends Equatable {
 
   String get formattedPrice {
     if (price >= 1000) return '\$${price.toStringAsFixed(2)}';
-    if (price >= 1)    return '\$${price.toStringAsFixed(3)}';
+    if (price >= 1) return '\$${price.toStringAsFixed(3)}';
     return '\$${price.toStringAsFixed(5)}';
   }
 
@@ -156,7 +391,7 @@ class Position extends Equatable {
   final double quantity;
   final DateTime openedAt;
   final Exchange exchange;
-  final double stopLossPct;   // e.g. 0.05 = close if down 5%
+  final double stopLossPct; // e.g. 0.05 = close if down 5%
   final double takeProfitPct; // e.g. 0.10 = close if up 10%
 
   const Position({
@@ -176,8 +411,8 @@ class Position extends Equatable {
   double get pnlPercent =>
       entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
   bool get isProfit => unrealizedPnL >= 0;
-  bool get isStopLossHit   => pnlPercent <= -(stopLossPct * 100);
-  bool get isTakeProfitHit => pnlPercent >=  (takeProfitPct * 100);
+  bool get isStopLossHit => pnlPercent <= -(stopLossPct * 100);
+  bool get isTakeProfitHit => pnlPercent >= (takeProfitPct * 100);
 
   Position copyWith({
     double? currentPrice,
