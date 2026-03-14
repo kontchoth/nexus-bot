@@ -325,13 +325,13 @@ class SpxPosition extends Equatable {
 /// Negative net GEX = dealers are net short gamma → they chase moves,
 /// amplifying directional trends and increasing volatility.
 class GexData extends Equatable {
-  /// Aggregate net GEX in $billions.
+  /// Aggregate net GEX in $billions for a 1% underlying move.
   final double netGex;
 
   /// Current SPX spot price at the time this snapshot was taken.
   final double spxSpotPrice;
 
-  /// Per-strike GEX contribution in $millions.
+  /// Per-strike GEX contribution in $millions for a 1% underlying move.
   /// Positive = call-heavy (stabilizing), negative = put-heavy (destabilizing).
   final Map<double, double> gexByStrike;
 
