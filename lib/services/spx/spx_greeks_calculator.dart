@@ -8,15 +8,17 @@ import '../../models/spx_models.dart';
 /// Vega is expressed per 1% move in IV (divided by 100).
 class SpxGreeksCalculator {
   static const double _riskFreeRate = 0.05; // ~5% US risk-free rate
+  static const double _contractMultiplier = 100.0;
+  static const double _onePercentMove = 0.01;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
   /// Compute all four greeks for a contract.
   static OptionsGreeks calcGreeks({
-    required double spot,        // Current SPX price, e.g. 5750.0
-    required double strike,      // Option strike, e.g. 5800.0
-    required int daysToExpiry,   // Calendar days remaining
-    required double iv,          // Implied volatility as decimal, e.g. 0.18
+    required double spot, // Current SPX price, e.g. 5750.0
+    required double strike, // Option strike, e.g. 5800.0
+    required int daysToExpiry, // Calendar days remaining
+    required double iv, // Implied volatility as decimal, e.g. 0.18
     required OptionsSide side,
   }) {
     if (daysToExpiry <= 0 || iv <= 0 || spot <= 0) {
@@ -27,10 +29,10 @@ class SpxGreeksCalculator {
     final d1 = _d1(spot, strike, T, iv);
     final d2 = d1 - iv * sqrt(T);
 
-    final delta  = _calcDelta(d1, d2, T, side);
-    final gamma  = _calcGamma(spot, d1, iv, T);
-    final theta  = _calcTheta(spot, strike, d1, d2, iv, T, side);
-    final vega   = _calcVega(spot, d1, T);
+    final delta = _calcDelta(d1, d2, T, side);
+    final gamma = _calcGamma(spot, d1, iv, T);
+    final theta = _calcTheta(spot, strike, d1, d2, iv, T, side);
+    final vega = _calcVega(spot, d1, T);
 
     return OptionsGreeks(
       delta: delta,
@@ -73,12 +75,15 @@ class SpxGreeksCalculator {
     return ((currentIv - minIv) / (maxIv - minIv) * 100).clamp(0, 100);
   }
 
-  /// Net dealer Gamma Exposure in $billions.
+  /// Net dealer Gamma Exposure in $billions for a 1% underlying move.
   ///
-  /// Convention: dealers are assumed SHORT calls (negative call GEX) and
-  /// LONG puts (positive put GEX from the dealer's hedge perspective).
+  /// Convention: calls contribute positive GEX and puts contribute negative
+  /// GEX as a simplified proxy for customer-long / dealer-short positioning.
   ///
-  /// Strike GEX = OI × gamma × 100 × spot²
+  /// Gamma is re-derived at the snapshot spot, IV, and remaining time so the
+  /// estimate can move intraday even when open interest is static.
+  ///
+  /// Strike GEX = OI × gamma × 100 × spot² × 0.01
   /// Net GEX = Σ(call GEX) − Σ(put GEX)
   ///
   /// Positive net GEX → dealers long gamma (stabilizing).
@@ -88,15 +93,36 @@ class SpxGreeksCalculator {
     double spot, {
     DateTime? timestamp,
   }) {
+    final asOf = timestamp ?? DateTime.now();
     final byStrike = <double, double>{};
 
     for (final contract in chain) {
-      final strikGex =
-          contract.openInterest * contract.greeks.gamma * 100 * spot * spot;
+      if (contract.openInterest <= 0 ||
+          contract.impliedVolatility <= 0 ||
+          spot <= 0) {
+        continue;
+      }
 
-      final contribution = contract.side == OptionsSide.call
-          ? strikGex      // positive = dealers short calls → buy pressure on up moves
-          : -strikGex;    // negative = dealers short puts → sell pressure on down moves
+      final timeToExpiryYears = _timeToExpiryYearsForGex(contract, asOf);
+      if (timeToExpiryYears <= 0) continue;
+
+      final gamma = _calcGammaAtSnapshot(
+        spot: spot,
+        strike: contract.strike,
+        timeToExpiryYears: timeToExpiryYears,
+        iv: contract.impliedVolatility,
+      );
+      if (gamma <= 0) continue;
+
+      final strikeGex = contract.openInterest *
+          gamma *
+          _contractMultiplier *
+          spot *
+          spot *
+          _onePercentMove;
+
+      final contribution =
+          contract.side == OptionsSide.call ? strikeGex : -strikeGex;
 
       byStrike.update(
         contract.strike,
@@ -106,8 +132,7 @@ class SpxGreeksCalculator {
     }
 
     // Scale to $billions
-    final netGex =
-        byStrike.values.fold<double>(0, (s, v) => s + v) / 1e9;
+    final netGex = byStrike.values.fold<double>(0, (s, v) => s + v) / 1e9;
     final scaledByStrike =
         byStrike.map((k, v) => MapEntry(k, v / 1e6)); // in $millions per strike
 
@@ -115,8 +140,51 @@ class SpxGreeksCalculator {
       netGex: netGex,
       spxSpotPrice: spot,
       gexByStrike: scaledByStrike,
-      lastUpdated: timestamp ?? DateTime.now(),
+      lastUpdated: asOf,
     );
+  }
+
+  static double _calcGammaAtSnapshot({
+    required double spot,
+    required double strike,
+    required double timeToExpiryYears,
+    required double iv,
+  }) {
+    if (spot <= 0 || strike <= 0 || iv <= 0 || timeToExpiryYears <= 0) {
+      return 0;
+    }
+    final d1 = _d1(spot, strike, timeToExpiryYears, iv);
+    return _calcGamma(spot, d1, iv, timeToExpiryYears);
+  }
+
+  static double _timeToExpiryYearsForGex(
+    OptionsContract contract,
+    DateTime asOf,
+  ) {
+    var expiryMoment = contract.expiry;
+    final hasNoExplicitTime = contract.expiry.hour == 0 &&
+        contract.expiry.minute == 0 &&
+        contract.expiry.second == 0 &&
+        contract.expiry.millisecond == 0 &&
+        contract.expiry.microsecond == 0;
+
+    if (hasNoExplicitTime) {
+      expiryMoment = DateTime(
+        contract.expiry.year,
+        contract.expiry.month,
+        contract.expiry.day,
+        16,
+      );
+    }
+
+    final remainingMs = expiryMoment.difference(asOf).inMilliseconds;
+    if (remainingMs > 0) {
+      return remainingMs / Duration.millisecondsPerDay / 365.0;
+    }
+    if (contract.daysToExpiry > 0) {
+      return contract.daysToExpiry / 365.0;
+    }
+    return 0;
   }
 
   // ── Black-Scholes internals ────────────────────────────────────────────────
@@ -163,12 +231,12 @@ class SpxGreeksCalculator {
   /// Cumulative distribution function of the standard normal.
   /// Uses the Abramowitz & Stegun rational approximation (error < 7.5e-8).
   static double _normCdf(double x) {
-    const a1 =  0.254829592;
+    const a1 = 0.254829592;
     const a2 = -0.284496736;
-    const a3 =  1.421413741;
+    const a3 = 1.421413741;
     const a4 = -1.453152027;
-    const a5 =  1.061405429;
-    const p  =  0.3275911;
+    const a5 = 1.061405429;
+    const p = 0.3275911;
 
     final sign = x < 0 ? -1 : 1;
     final t = 1.0 / (1.0 + p * x.abs());
@@ -178,6 +246,5 @@ class SpxGreeksCalculator {
   }
 
   /// Probability density function of the standard normal.
-  static double _normPdf(double x) =>
-      exp(-0.5 * x * x) / sqrt(2 * pi);
+  static double _normPdf(double x) => exp(-0.5 * x * x) / sqrt(2 * pi);
 }
