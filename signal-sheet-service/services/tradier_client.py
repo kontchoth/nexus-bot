@@ -148,7 +148,13 @@ class TradierClient:
             "end":            end   or f"{today} 16:01",
             "session_filter": "open",
         }
-        data = await self._get("/markets/timesales", params)
+        try:
+            data = await self._get("/markets/timesales", params)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400:
+                logger.warning("timesales 400 for %s/%s — no market data (market closed?)", symbol, interval)
+                return []
+            raise
         series = data.get("series") or {}
         candles = series.get("data") or []
         if isinstance(candles, dict):
