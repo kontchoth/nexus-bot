@@ -39,11 +39,12 @@ class PlaybookWriter:
         market_date:    str,
         payload:        Dict[str, Any],
         signal_version: str = "v2",
+        display_date:   Optional[str] = None,
     ) -> None:
         doc = self._doc_ref(market_date)
         data = {
             # Meta
-            "date":                   market_date,
+            "date":                   display_date or market_date,
             "symbol":                 "SPX",
             "schema_version":         SCHEMA_VERSION,
             "signal_engine_version":  signal_version,
@@ -219,6 +220,11 @@ class PlaybookWriter:
     # ─────────────────────────────────────────────────────────────────────────
     # Read helpers
     # ─────────────────────────────────────────────────────────────────────────
+
+    async def delete_playbook(self, market_date: str) -> None:
+        """Hard-delete a playbook document. Used by /replay with force=True."""
+        await self._doc_ref(market_date).delete()
+        logger.info("Deleted playbook %s", market_date)
 
     async def get_playbook(self, market_date: str) -> Optional[Dict[str, Any]]:
         snap = await self._doc_ref(market_date).get()

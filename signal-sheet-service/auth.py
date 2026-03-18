@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 _SERVICE_URL    = os.environ.get("SERVICE_URL", "")
 _SCHEDULER_SA   = os.environ.get("SCHEDULER_SA", "")
 _SKIP_AUTH      = os.environ.get("SKIP_AUTH", "false").lower() == "true"  # dev only
+_REPLAY_SECRET  = os.environ.get("REPLAY_SECRET", "")
 
 
 def require_scheduler_auth(request: Request) -> None:
@@ -76,3 +77,19 @@ def require_scheduler_auth(request: Request) -> None:
             raise HTTPException(status_code=403, detail="Caller not authorised")
 
     logger.debug("OIDC verified: %s", claims.get("email"))
+
+
+def require_replay_auth(request: Request) -> None:
+    """
+    Lightweight secret-header auth for the /replay endpoint.
+    Set REPLAY_SECRET in Cloud Run env vars. Pass it as X-Replay-Secret header.
+    Falls through in dev when SKIP_AUTH=true.
+    """
+    if _SKIP_AUTH:
+        logger.warning("SKIP_AUTH=true — skipping replay auth (dev mode only)")
+        return
+    if not _REPLAY_SECRET:
+        raise HTTPException(status_code=503, detail="REPLAY_SECRET not configured on this service")
+    provided = request.headers.get("X-Replay-Secret", "")
+    if not provided or provided != _REPLAY_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Replay-Secret")

@@ -3,6 +3,51 @@ import 'dart:math' as math;
 import 'package:equatable/equatable.dart';
 export 'common_models.dart';
 
+// ── Quote data ────────────────────────────────────────────────────────────────
+
+class SpxQuoteData {
+  final double spot;
+  final double dayLow;
+  final double dayHigh;
+  final double week52Low;
+  final double week52High;
+  final double bid;
+  final double ask;
+  final double change;
+  final double changePercent;
+  final int volume;
+  final int avgVolume;
+  final double beta;
+  final double marketCap;
+  final double peRatio;
+
+  const SpxQuoteData({
+    required this.spot,
+    required this.dayLow,
+    required this.dayHigh,
+    required this.week52Low,
+    required this.week52High,
+    this.bid = 0,
+    this.ask = 0,
+    this.change = 0,
+    this.changePercent = 0,
+    this.volume = 0,
+    this.avgVolume = 0,
+    this.beta = 0,
+    this.marketCap = 0,
+    this.peRatio = 0,
+  });
+
+  static const empty = SpxQuoteData(
+    spot: 0, dayLow: 0, dayHigh: 0, week52Low: 0, week52High: 0,
+  );
+
+  double get spread => ask > 0 && bid > 0 ? ask - bid : 0;
+  double get volRatio => avgVolume > 0 ? volume / avgVolume : 0;
+  bool get isUp => change >= 0;
+  bool get isPopulated => spot > 0 && dayHigh > dayLow;
+}
+
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
 enum OptionsSide { call, put }

@@ -63,24 +63,52 @@ class SpxOptionsService {
   bool get isMarketOpenNow => _isMarketHours();
 
   /// SPX spot price.  Returns simulator value on failure.
-  Future<double> fetchSpxSpot() async {
+  Future<double> fetchSpxSpot() async => (await fetchSpxQuote()).spot;
+
+  /// SPX quote with today's range + 52-week range. Returns simulator fallback.
+  Future<SpxQuoteData> fetchSpxQuote() async {
     if (!_shouldAttemptLive()) {
-      _liveLog('spot -> simulator (${_liveSkipReason()})');
-      return _sim.spot;
+      _liveLog('quote -> simulator (${_liveSkipReason()})');
+      final s = _sim.spot;
+      return SpxQuoteData(
+        spot: s, dayLow: s * 0.995, dayHigh: s * 1.005,
+        week52Low: s * 0.85, week52High: s * 1.15,
+      );
     }
     try {
       final uri = Uri.parse('$_baseUrl/markets/quotes?symbols=SPX&greeks=false');
       final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 5));
       if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-      final data = jsonDecode(res.body);
-      final last = data['quotes']['quote']['last'] as num?;
-      if (last == null || last <= 0) throw Exception('Invalid quote');
+      final q = jsonDecode(res.body)['quotes']['quote'];
+      final last    = (q['last']              as num?)?.toDouble() ?? 0;
+      if (last <= 0) throw Exception('Invalid quote');
+      final low     = (q['low']               as num?)?.toDouble() ?? last * 0.995;
+      final high    = (q['high']              as num?)?.toDouble() ?? last * 1.005;
+      final w52l    = (q['week_52_low']       as num?)?.toDouble() ?? last * 0.85;
+      final w52h    = (q['week_52_high']      as num?)?.toDouble() ?? last * 1.15;
+      final bid       = (q['bid']               as num?)?.toDouble() ?? 0;
+      final ask       = (q['ask']               as num?)?.toDouble() ?? 0;
+      final change    = (q['change']            as num?)?.toDouble() ?? 0;
+      final changePct = (q['change_percentage'] as num?)?.toDouble() ?? 0;
+      final volume    = (q['volume']            as num?)?.toInt() ?? 0;
+      final avgVol    = (q['average_volume']    as num?)?.toInt() ?? 0;
+      final beta      = (q['beta']              as num?)?.toDouble() ?? 0;
+      final mktCap    = (q['market_cap']        as num?)?.toDouble() ?? 0;
+      final pe        = (q['pe_ratio']          as num?)?.toDouble() ?? 0;
       _markLiveSuccess();
-      return last.toDouble();
+      return SpxQuoteData(
+        spot: last, dayLow: low, dayHigh: high, week52Low: w52l, week52High: w52h,
+        bid: bid, ask: ask, change: change, changePercent: changePct,
+        volume: volume, avgVolume: avgVol, beta: beta, marketCap: mktCap, peRatio: pe,
+      );
     } catch (e) {
-      _liveLog('spot live request failed: $e');
+      _liveLog('quote live request failed: $e');
       _handleLiveError(error: e);
-      return _sim.spot;
+      final s = _sim.spot;
+      return SpxQuoteData(
+        spot: s, dayLow: s * 0.995, dayHigh: s * 1.005,
+        week52Low: s * 0.85, week52High: s * 1.15,
+      );
     }
   }
 
@@ -148,18 +176,21 @@ class SpxOptionsService {
       final spot = await fetchSpxSpot();
       final now  = DateTime.now();
       final updated = contracts.map((c) {
-        final remainingDte = c.expiry.difference(now).inDays.clamp(0, 365);
+        final remainingMinutes = c.expiry.difference(now).inMinutes;
+        final remainingDteFrac = (remainingMinutes / (24.0 * 60.0))
+            .clamp(1.0 / (24.0 * 60.0), 365.0);
+        final remainingDteInt = c.expiry.difference(now).inDays.clamp(0, 365);
         final newGreeks = SpxGreeksCalculator.calcGreeks(
           spot: spot,
           strike: c.strike,
-          daysToExpiry: remainingDte,
+          daysToExpiry: remainingDteFrac,
           iv: c.impliedVolatility,
           side: c.side,
         );
         final newPrice = SpxGreeksCalculator.calcPrice(
           spot: spot,
           strike: c.strike,
-          daysToExpiry: remainingDte,
+          daysToExpiry: remainingDteFrac,
           iv: c.impliedVolatility,
           side: c.side,
         );
@@ -168,7 +199,7 @@ class SpxOptionsService {
           ask:         newPrice * 1.01,
           lastPrice:   newPrice,
           greeks:      newGreeks,
-          daysToExpiry: remainingDte,
+          daysToExpiry: remainingDteInt,
           lastUpdated: now,
         );
       }).toList();
@@ -190,7 +221,11 @@ class SpxOptionsService {
   ) {
     final expiryDate = DateTime.parse(expiration);
     final now        = DateTime.now();
-    final dte        = expiryDate.difference(now).inDays.clamp(0, 365);
+    // Use fractional DTE in days so 0DTE options (hours left) still produce
+    // valid gamma. Minimum 1 minute to avoid division-by-zero in BS formulas.
+    final dteMinutes  = expiryDate.difference(now).inMinutes;
+    final dteFractional = (dteMinutes / (24.0 * 60.0)).clamp(1.0 / (24.0 * 60.0), 365.0);
+    final dteInt      = expiryDate.difference(now).inDays.clamp(0, 365);
     final contracts  = <OptionsContract>[];
 
     for (final opt in options) {
@@ -209,7 +244,7 @@ class SpxOptionsService {
         if (iv <= 0 || strike <= 0) continue;
 
         final greeks = SpxGreeksCalculator.calcGreeks(
-          spot: spot, strike: strike, daysToExpiry: dte, iv: iv, side: side,
+          spot: spot, strike: strike, daysToExpiry: dteFractional, iv: iv, side: side,
         );
         final ivRank = SpxGreeksCalculator.calcIvRank(iv, _ivHistoryPlaceholder());
         final signal = _scoreSignal(greeks, ivRank, oi, vol, (bid + ask) / 2);
@@ -219,7 +254,7 @@ class SpxOptionsService {
           side:              side,
           strike:            strike,
           expiry:            expiryDate,
-          daysToExpiry:      dte,
+          daysToExpiry:      dteInt,
           bid:               bid,
           ask:               ask,
           lastPrice:         last,

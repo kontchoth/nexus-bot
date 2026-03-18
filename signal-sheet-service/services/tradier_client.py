@@ -161,8 +161,13 @@ class TradierClient:
             candles = [candles]
         return candles
 
-    async def get_daily_candles(self, symbol: str, lookback: int = 30) -> List[Dict]:
-        end_d   = date.today()
+    async def get_daily_candles(
+        self,
+        symbol:   str,
+        lookback: int = 30,
+        end_date: Optional[date] = None,
+    ) -> List[Dict]:
+        end_d   = end_date or date.today()
         start_d = end_d - timedelta(days=lookback * 2)
         data = await self._get("/markets/history", {
             "symbol":   symbol,
@@ -255,3 +260,122 @@ class TradierClient:
             "breadth_quotes":  breadth_quotes,
             "fetched_at":      datetime.utcnow().isoformat(),
         }
+
+    async def fetch_historical_snapshot(self, target_date: str) -> Dict[str, Any]:
+        """
+        Fetch all data needed by /generate for a historical trading date.
+
+        Uses daily candles as proxies for quote data (no intraday quote history
+        in Tradier). Options chain uses the live chain — GEX values are NOT
+        historically accurate (flagged in _replay_caveats).
+        """
+        target_d = date.fromisoformat(target_date)
+
+        vix_syms = ["VIX", "VIX3M", "VVIX"]
+        breadth_syms = [
+            "XLK", "XLF", "XLV", "XLC", "XLY", "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU",
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "BAC", "UNH",
+        ]
+
+        tasks = [
+            self.get_intraday_candles("SPY", "1min",
+                                      start=f"{target_date} 09:29",
+                                      end=f"{target_date} 16:01"),
+            self.get_intraday_candles("SPY", "5min",
+                                      start=f"{target_date} 09:29",
+                                      end=f"{target_date} 16:01"),
+            self.get_daily_candles("SPY", lookback=5, end_date=target_d),
+            self.get_options_chain("SPX"),
+            *[self.get_daily_candles(sym, lookback=5, end_date=target_d)
+              for sym in vix_syms + breadth_syms],
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        def _safe(idx):
+            r = results[idx]
+            return r if not isinstance(r, Exception) else []
+
+        candles_1min = _safe(0)
+        candles_5min = _safe(1)
+        spy_daily    = _safe(2)
+        chain        = _safe(3)
+        idx = 4
+        vix_daily:     Dict[str, list] = {}
+        breadth_daily: Dict[str, list] = {}
+        for sym in vix_syms:
+            vix_daily[sym] = _safe(idx); idx += 1
+        for sym in breadth_syms:
+            breadth_daily[sym] = _safe(idx); idx += 1
+
+        # ── Build spy_quote from daily candles ───────────────────────────────
+        spy_target = _find_day(spy_daily, target_date)
+        spy_prev   = spy_daily[-2] if len(spy_daily) >= 2 else None
+        spy_quote  = {
+            "symbol":    "SPY",
+            "last":      float(spy_target["close"]) if spy_target else 0.0,
+            "prevclose": float(spy_prev["close"])   if spy_prev   else 0.0,
+            "open":      float(spy_target["open"])  if spy_target else None,
+            "bid": 0.0, "ask": 0.0,
+            "volume":    int(spy_target.get("volume", 0)) if spy_target else 0,
+        }
+
+        # ── Build vix_quotes from daily candles ──────────────────────────────
+        vix_quotes: Dict[str, Dict] = {}
+        for sym in vix_syms:
+            days       = vix_daily[sym]
+            target_day = _find_day(days, target_date)
+            prev_day   = days[-2] if len(days) >= 2 else None
+            if target_day:
+                vix_quotes[sym] = {
+                    "symbol":    sym,
+                    "last":      float(target_day["close"]),
+                    "prevclose": float(prev_day["close"]) if prev_day else float(target_day["close"]),
+                }
+
+        # ── Build breadth_quotes from daily candles ───────────────────────────
+        breadth_quotes: Dict[str, Dict] = {}
+        for sym in breadth_syms:
+            days       = breadth_daily[sym]
+            target_day = _find_day(days, target_date)
+            prev_day   = days[-2] if len(days) >= 2 else None
+            if target_day:
+                breadth_quotes[sym] = {
+                    "symbol":    sym,
+                    "last":      float(target_day["close"]),
+                    "prevclose": float(prev_day["close"]) if prev_day else float(target_day["close"]),
+                    "volume":    int(target_day.get("volume", 0)),
+                }
+
+        caveats = ["gex_not_historical"]
+        if not candles_1min:
+            caveats.append("no_intraday_1min — date may exceed Tradier history depth")
+        if len(breadth_quotes) < len(breadth_syms):
+            caveats.append(f"breadth_partial ({len(breadth_quotes)}/{len(breadth_syms)} symbols)")
+
+        return {
+            "quote":             spy_quote,
+            "spy_quote":         spy_quote,
+            "options_chain":     chain,
+            "candles_1min":      candles_1min,
+            "candles_5min":      candles_5min,
+            "vix_quotes":        vix_quotes,
+            "breadth_quotes":    breadth_quotes,
+            "fetched_at":        datetime.utcnow().isoformat(),
+            "_replay_caveats":   caveats,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _find_day(days: List[Dict], target_date: str) -> Optional[Dict]:
+    """Return the daily candle whose 'date' field matches target_date (YYYY-MM-DD).
+    Falls back to the last candle on or before target_date if no exact match."""
+    for d in reversed(days):
+        if d.get("date") == target_date:
+            return d
+    for d in reversed(days):
+        if d.get("date", "") <= target_date:
+            return d
+    return days[-1] if days else None

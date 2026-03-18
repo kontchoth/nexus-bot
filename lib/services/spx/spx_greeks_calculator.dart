@@ -13,13 +13,15 @@ class SpxGreeksCalculator {
 
   /// Compute all four greeks for a contract.
   static OptionsGreeks calcGreeks({
-    required double spot,        // Current SPX price, e.g. 5750.0
-    required double strike,      // Option strike, e.g. 5800.0
-    required int daysToExpiry,   // Calendar days remaining
-    required double iv,          // Implied volatility as decimal, e.g. 0.18
+    required double spot,          // Current SPX price, e.g. 5750.0
+    required double strike,        // Option strike, e.g. 5800.0
+    required double daysToExpiry,  // Fractional calendar days remaining (e.g. 0.25 for 6h left)
+    required double iv,            // Implied volatility as decimal, e.g. 0.18
     required OptionsSide side,
   }) {
-    if (daysToExpiry <= 0 || iv <= 0 || spot <= 0) {
+    // Minimum 1 minute of time value to avoid division-by-zero in gamma/vega
+    const minDays = 1.0 / (24.0 * 60.0);
+    if (daysToExpiry < minDays || iv <= 0 || spot <= 0) {
       return const OptionsGreeks(delta: 0, gamma: 0, theta: 0, vega: 0);
     }
 
@@ -44,11 +46,12 @@ class SpxGreeksCalculator {
   static double calcPrice({
     required double spot,
     required double strike,
-    required int daysToExpiry,
+    required double daysToExpiry,
     required double iv,
     required OptionsSide side,
   }) {
-    if (daysToExpiry <= 0 || iv <= 0 || spot <= 0) return 0;
+    const minDays = 1.0 / (24.0 * 60.0);
+    if (daysToExpiry < minDays || iv <= 0 || spot <= 0) return 0;
     final T = daysToExpiry / 365.0;
     final d1 = _d1(spot, strike, T, iv);
     final d2 = d1 - iv * sqrt(T);

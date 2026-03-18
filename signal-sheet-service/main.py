@@ -19,14 +19,14 @@ import logging
 import os
 import time as _time
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from auth import require_scheduler_auth
+from auth import require_replay_auth, require_scheduler_auth
 from services.market_session import (
     market_date, is_trading_day, market_date_obj,
     session_bars_ready, phase_window_active,
@@ -371,6 +371,162 @@ async def render_snapshot(body: RenderRequest, request: Request):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /replay  — full pipeline replay for a historical trading date
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ReplayRequest(BaseModel):
+    date:  str            # YYYY-MM-DD target trading date
+    force: bool = False   # if True, delete any existing replay doc and re-run
+
+
+@app.post("/replay")
+async def replay(body: ReplayRequest, request: Request):
+    require_replay_auth(request)
+    t0 = _time.monotonic()
+
+    try:
+        target_d = date.fromisoformat(body.date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+
+    if not is_trading_day(target_d):
+        raise HTTPException(status_code=400, detail=f"{body.date} is not a trading day")
+
+    target_date = body.date
+    doc_id      = target_date
+    warnings: List[str] = []
+
+    if body.force:
+        await writer.delete_playbook(doc_id)
+        logger.info("replay: deleted existing doc %s (force=True)", doc_id)
+
+    # ── Phase 1: generate ────────────────────────────────────────────────────
+    snapshot = await tradier.fetch_historical_snapshot(target_date)
+    warnings.extend(snapshot.pop("_replay_caveats", []))
+
+    if not snapshot["candles_1min"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No intraday 1-min data for {target_date} — date likely exceeds Tradier history depth",
+        )
+
+    sheet = _build_sheet_from_snapshot(snapshot, target_date)
+    await writer.write_premarket(
+        market_date    = doc_id,
+        payload        = sheet,
+        signal_version = SIGNAL_ENGINE_VERSION,
+    )
+
+    # ── Phase 2: resolve ─────────────────────────────────────────────────────
+    candles_1min = snapshot["candles_1min"]
+    logger.info("replay: candles_1min count=%d first=%s",
+                len(candles_1min), candles_1min[0] if candles_1min else None)
+    opening_bars = _find_opening_bars(candles_1min, target_date)
+    if not opening_bars:
+        raise HTTPException(status_code=422, detail=f"No opening bars found for {target_date}")
+
+    official_open   = float(opening_bars[0]["open"])
+    yesterday_close = sheet["yesterday_close"]
+
+    algo_step, recommendation, signal_unity, reason = _resolve_algorithm(
+        official_open   = official_open,
+        yesterday_close = yesterday_close,
+        signals         = sheet["signals"],
+        dpl_live        = sheet.get("dpl_live"),
+    )
+    await writer.write_open_decision(
+        market_date    = doc_id,
+        official_open  = official_open,
+        algorithm_step = algo_step,
+        recommendation = recommendation,
+        signal_unity   = signal_unity,
+        reason         = reason,
+    )
+
+    # ── Phase 3: lock-minute14 ───────────────────────────────────────────────
+    minute14_bars = [
+        c for c in candles_1min
+        if _bar_in_window(c["time"], target_date, "09:30", "09:43")
+    ]
+    if len(minute14_bars) < 14:
+        warnings.append(f"only_{len(minute14_bars)}_bars_for_min14")
+    min14_high = max((float(c["high"]) for c in minute14_bars), default=0.0)
+    min14_low  = min((float(c["low"])  for c in minute14_bars), default=0.0)
+    await writer.write_minute14_lock(doc_id, min14_high, min14_low)
+
+    # ── Phase 4: refresh ─────────────────────────────────────────────────────
+    candles_5min = snapshot["candles_5min"]
+    last_bar = candles_5min[-1] if candles_5min else None
+    spot     = float(last_bar["close"]) if last_bar else float(snapshot["spy_quote"]["last"])
+
+    dpl_live     = _compute_live_dpl(candles_5min, spot)
+    session_high = max((float(c["high"]) for c in candles_5min), default=None)
+    session_low  = min((float(c["low"])  for c in candles_5min), default=None)
+
+    playbook_mid    = await writer.get_playbook(doc_id)
+    upgrade_rec     = upgrade_reason = upgrade_step = None
+    if playbook_mid and playbook_mid.get("recommendation") == "WAIT" and _can_upgrade_wait(
+        dpl_live=dpl_live, playbook=playbook_mid,
+        session_high=session_high, session_low=session_low,
+    ):
+        upgrade_rec, upgrade_reason, upgrade_step = _compute_upgrade(dpl_live, playbook_mid)
+
+    await writer.write_refresh(
+        market_date       = doc_id,
+        dpl_live          = dpl_live,
+        live_session_high = session_high,
+        live_session_low  = session_low,
+        recommendation    = upgrade_rec,
+        reason            = upgrade_reason,
+        algorithm_step    = upgrade_step,
+    )
+
+    # ── Phase 5: render-snapshot (final) ─────────────────────────────────────
+    final_playbook = await writer.get_playbook(doc_id)
+    gcs_path = None
+    try:
+        artifact = await renderer.render(
+            phase    = "final",
+            playbook = final_playbook,
+            mdate    = target_date,
+        )
+        await writer.write_screenshot_metadata(
+            market_date      = doc_id,
+            phase            = "final",
+            storage_path     = artifact["storage_path"],
+            public_url       = artifact.get("public_url"),
+            width            = artifact["width"],
+            height           = artifact["height"],
+            template_version = artifact["template_version"],
+        )
+        gcs_path = artifact["storage_path"]
+    except Exception as exc:
+        logger.warning("replay render failed (non-blocking): %s", exc)
+        warnings.append(f"render_failed: {exc}")
+
+    final_playbook = await writer.get_playbook(doc_id)
+    duration = int((_time.monotonic() - t0) * 1000)
+    logger.info("replay complete date=%s doc=%s rec=%s duration_ms=%d",
+                target_date, doc_id, final_playbook.get("recommendation"), duration)
+
+    return {
+        "status":         "ok",
+        "target_date":    target_date,
+        "doc_id":         doc_id,
+        "phases_run":     ["generate", "resolve", "lock-minute14", "refresh", "render-snapshot"],
+        "recommendation": final_playbook.get("recommendation"),
+        "algorithm_step": final_playbook.get("algorithm_step"),
+        "official_open":  final_playbook.get("official_open"),
+        "min14_high":     final_playbook.get("min14_high"),
+        "min14_low":      final_playbook.get("min14_low"),
+        "dpl_direction":  (final_playbook.get("dpl_live") or {}).get("direction"),
+        "gcs_path":       gcs_path,
+        "duration_ms":    duration,
+        "warnings":       warnings,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -561,9 +717,26 @@ def _compute_upgrade(dpl_live: Dict, playbook: Dict) -> tuple:
     return ("GO_SHORT", "WAIT upgraded: DPL confirmed SHORT after open window.", 3)
 
 
+def _find_opening_bars(candles: list, target_date: str) -> list:
+    """
+    Return bars at the 09:30 open for target_date.
+    Handles both 'YYYY-MM-DD HH:MM:SS' and 'YYYY-MM-DDTHH:MM:SS' formats,
+    and Unix epoch timestamps.
+    """
+    results = []
+    for c in candles:
+        t = c.get("time", "")
+        # Normalise: replace T separator and strip seconds
+        normalised = str(t).replace("T", " ")[:16]   # → "YYYY-MM-DD HH:MM"
+        if normalised.startswith(f"{target_date} 09:3"):
+            results.append(c)
+    return results
+
+
 def _bar_in_window(time_str: str, mdate: str, start: str, end: str) -> bool:
     try:
-        bar_time = time_str.split(" ")[1][:5]   # HH:MM
+        normalised = str(time_str).replace("T", " ")
+        bar_time   = normalised.split(" ")[1][:5]   # HH:MM
         return start <= bar_time <= end
     except Exception:
         return False

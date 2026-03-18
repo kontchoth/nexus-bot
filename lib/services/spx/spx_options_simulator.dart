@@ -62,14 +62,14 @@ class SpxOptionsSimulator {
           final greeks = SpxGreeksCalculator.calcGreeks(
             spot: _spot,
             strike: strike,
-            daysToExpiry: dte,
+            daysToExpiry: dte.toDouble(),
             iv: iv,
             side: side,
           );
           final price = SpxGreeksCalculator.calcPrice(
             spot: _spot,
             strike: strike,
-            daysToExpiry: dte,
+            daysToExpiry: dte.toDouble(),
             iv: iv,
             side: side,
           );
@@ -119,11 +119,13 @@ class SpxOptionsSimulator {
       // Re-price using delta approximation: ΔP ≈ delta × ΔS
       final spotDelta = _spot - c.greeks.delta * c.strike; // rough re-centre
       final _ = spotDelta; // suppress lint — we use SpxGreeksCalculator below
-      final remainingDte = c.expiry.difference(now).inDays.clamp(0, 365);
+      final remainingDteInt = c.expiry.difference(now).inDays.clamp(0, 365);
+      final remainingDteFrac = (c.expiry.difference(now).inMinutes / (24.0 * 60.0))
+          .clamp(1.0 / (24.0 * 60.0), 365.0);
       final newPrice = SpxGreeksCalculator.calcPrice(
         spot: _spot,
         strike: c.strike,
-        daysToExpiry: remainingDte,
+        daysToExpiry: remainingDteFrac,
         iv: c.impliedVolatility,
         side: c.side,
       );
@@ -132,7 +134,7 @@ class SpxOptionsSimulator {
       final newGreeks = SpxGreeksCalculator.calcGreeks(
         spot: _spot,
         strike: c.strike,
-        daysToExpiry: remainingDte,
+        daysToExpiry: remainingDteFrac,
         iv: c.impliedVolatility,
         side: c.side,
       );
@@ -142,7 +144,7 @@ class SpxOptionsSimulator {
         ask:         _ask(newPrice),
         lastPrice:   newPrice,
         greeks:      newGreeks,
-        daysToExpiry: remainingDte,
+        daysToExpiry: remainingDteInt,
         lastUpdated: now,
       );
     }).toList();
