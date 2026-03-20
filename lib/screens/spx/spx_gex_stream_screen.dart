@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import '../../blocs/spx/gex_stream_bloc.dart';
+import '../../blocs/spx/spx_bloc.dart';
 import '../../models/gex_stream_models.dart';
 import '../../models/spx_models.dart';
 import '../../theme/app_theme.dart';
@@ -39,24 +40,14 @@ double _toX(DateTime t) =>
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class SpxGexStreamScreen extends StatefulWidget {
-  /// Tradier credentials are passed at construction time so this screen can be
-  /// pushed via Navigator.push without needing a SpxBloc in the new route's
-  /// widget tree.
-  final String? tradierToken;
-  final String tradierEnvironment;
-
-  const SpxGexStreamScreen({
-    super.key,
-    required this.tradierToken,
-    required this.tradierEnvironment,
-  });
+  const SpxGexStreamScreen({super.key});
 
   @override
   State<SpxGexStreamScreen> createState() => _SpxGexStreamScreenState();
 }
 
 class _SpxGexStreamScreenState extends State<SpxGexStreamScreen> {
-  late final GexStreamBloc _gexBloc;
+  late GexStreamBloc _gexBloc;
 
   // Shared crosshair — nearest point index in the buffer.
   final _touchedIdx = ValueNotifier<int?>(-1);
@@ -77,9 +68,10 @@ class _SpxGexStreamScreenState extends State<SpxGexStreamScreen> {
   @override
   void initState() {
     super.initState();
+    final spxState = context.read<SpxBloc>().state;
     _gexBloc = GexStreamBloc(
-      tradierToken: widget.tradierToken,
-      tradierEnvironment: widget.tradierEnvironment,
+      tradierToken: spxState.tradierToken,
+      tradierEnvironment: spxState.tradierEnvironment,
     );
     _gexBloc.add(const GexStreamStarted());
   }
@@ -98,46 +90,62 @@ class _SpxGexStreamScreenState extends State<SpxGexStreamScreen> {
     });
   }
 
+  void _restartBloc(String? token, String env) {
+    _gexBloc.close();
+    _gexBloc = GexStreamBloc(
+      tradierToken: token,
+      tradierEnvironment: env,
+    );
+    _gexBloc.add(const GexStreamStarted());
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<GexStreamBloc, GexStreamState>(
-      bloc: _gexBloc,
-      builder: (context, state) {
-        final points = state.points;
-        return Scaffold(
-          backgroundColor: AppTheme.bg,
-          appBar: _GexAppBar(
-            state: state,
-            windowMinutes: _windowMinutes,
-            onZoomIn: () => _setWindowMinutes(_windowMinutes * 0.7),
-            onZoomOut: () => _setWindowMinutes(_windowMinutes * 1.4),
-            onZoomReset: () => _setWindowMinutes(60.0),
-          ),
-          body: points.isEmpty
-              ? _EmptyState(isRunning: state.isRunning)
-              : GestureDetector(
-                  // Pinch-to-zoom: only intercepts 2-finger scale, does not
-                  // conflict with fl_chart's single-finger crosshair pan.
-                  onScaleStart: (_) =>
-                      _pinchStartWindow = _windowMinutes,
-                  onScaleUpdate: (d) {
-                    if (d.scale == 1.0) return;
-                    _setWindowMinutes(_pinchStartWindow / d.scale);
-                  },
-                  child: _ChartBody(
-                    points: points,
-                    strikeBars: state.strikeBars,
-                    windowMinutes: _windowMinutes,
-                    levels: state.levels,
-                    quote: state.quote,
-                    touchedIdx: _touchedIdx,
-                    onTouch: (i) => _touchedIdx.value = i,
-                    viewTab: _viewTab,
-                    onTabChange: (t) => setState(() => _viewTab = t),
+    return BlocListener<SpxBloc, SpxState>(
+      listenWhen: (p, c) =>
+          p.tradierToken != c.tradierToken ||
+          p.tradierEnvironment != c.tradierEnvironment,
+      listener: (context, state) =>
+          _restartBloc(state.tradierToken, state.tradierEnvironment),
+      child: BlocBuilder<GexStreamBloc, GexStreamState>(
+        bloc: _gexBloc,
+        builder: (context, state) {
+          final points = state.points;
+          return Scaffold(
+            backgroundColor: AppTheme.bg,
+            appBar: _GexAppBar(
+              state: state,
+              windowMinutes: _windowMinutes,
+              onZoomIn: () => _setWindowMinutes(_windowMinutes * 0.7),
+              onZoomOut: () => _setWindowMinutes(_windowMinutes * 1.4),
+              onZoomReset: () => _setWindowMinutes(60.0),
+            ),
+            body: points.isEmpty
+                ? _EmptyState(isRunning: state.isRunning)
+                : GestureDetector(
+                    // Pinch-to-zoom: only intercepts 2-finger scale, does not
+                    // conflict with fl_chart's single-finger crosshair pan.
+                    onScaleStart: (_) => _pinchStartWindow = _windowMinutes,
+                    onScaleUpdate: (d) {
+                      if (d.scale == 1.0) return;
+                      _setWindowMinutes(_pinchStartWindow / d.scale);
+                    },
+                    child: _ChartBody(
+                      points: points,
+                      strikeBars: state.strikeBars,
+                      windowMinutes: _windowMinutes,
+                      levels: state.levels,
+                      quote: state.quote,
+                      touchedIdx: _touchedIdx,
+                      onTouch: (i) => _touchedIdx.value = i,
+                      viewTab: _viewTab,
+                      onTabChange: (t) => setState(() => _viewTab = t),
+                    ),
                   ),
-                ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -180,11 +188,7 @@ class _GexAppBar extends StatelessWidget implements PreferredSizeWidget {
           height: 56,
           child: Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back_rounded,
-                    color: AppTheme.textPrimary, size: 20),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
+              const SizedBox(width: 16),
               Text(
                 'GEX STREAM',
                 style: GoogleFonts.syne(
@@ -792,10 +796,11 @@ class _PriceChart extends StatelessWidget {
     if (points.isEmpty) return const SizedBox.shrink();
 
     // Time-based x: minutes since 9:30 AM market open.
-    // Left-anchored: data builds from 0 (open) towards the right.
+    // Window-anchored: show last windowMinutes, but never before the first point.
     final marketOpen = _marketOpenFor(points.last.time);
     final latestX = math.max(1.0, _toX(points.last.time));
-    const chartMinX = 0.0;
+    final firstX = _toX(points.first.time);
+    final chartMinX = math.max(firstX, latestX - windowMinutes);
     final chartMaxX = latestX;
 
     final prices = points.map((p) => p.price).toList();
@@ -1113,7 +1118,8 @@ class _RatioChart extends StatelessWidget {
 
     final marketOpen = _marketOpenFor(points.last.time);
     final latestX = math.max(1.0, _toX(points.last.time));
-    const chartMinX = 0.0;
+    final firstX = _toX(points.first.time);
+    final chartMinX = math.max(firstX, latestX - windowMinutes);
     final chartMaxX = latestX;
 
     FlSpot toSpot(GexStreamPoint p, double v) => FlSpot(_toX(p.time), v);

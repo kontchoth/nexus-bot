@@ -29,7 +29,7 @@ SpxOptionsService _buildSpxOptionsService({
   return SpxOptionsService(
     apiToken: apiToken,
     useSandbox: SpxTradierEnvironment.isSandbox(tradierEnvironment),
-    enforceMarketHours: false,
+    enforceMarketHours: true,
   );
 }
 
@@ -145,6 +145,17 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
   final List<SpxSpotSample> _intradaySpots = <SpxSpotSample>[];
   final List<SpxCandleSample> _intradayCandles = <SpxCandleSample>[];
   final List<SpxIntradayMarker> _intradayMarkers = <SpxIntradayMarker>[];
+
+  // ── Triple Confluence state ───────────────────────────────────────────────
+  final List<double> _macdHistory = <double>[];   // rolling MACD line values
+  double? _vixLevel;
+  double? _prevVixLevel;
+  double? _priorDayHigh;
+  double? _priorDayLow;
+  double? _priorDayClose;
+  double? _weekHigh;
+  double? _weekLow;
+
   SpxStrategyActionType? _lastStrategyAction;
   String _executionMode = SpxOpportunityExecutionMode.manualConfirm;
   int _entryDelaySeconds = 30;
@@ -218,6 +229,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     on<ResetSpxDay>(_onResetDay);
     on<_ExecutePendingOpportunity>(_onExecutePendingOpportunity);
     on<_ExpirePendingOpportunity>(_onExpirePendingOpportunity);
+    on<LoadJournalHistory>(_onLoadJournalHistory);
     on<_SpxAddLog>((event, emit) {
       final newLogs = [event.log, ...state.logs].take(80).toList();
       emit(state.copyWith(logs: newLogs));
@@ -305,6 +317,10 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     if (_autoTickEnabled) {
       _startTimer();
     }
+    await Future.wait([
+      _refreshConfluenceData(),
+      _emitJournalHistory(emit),
+    ]);
   }
 
   Future<void> _onMarketTick(
@@ -319,6 +335,23 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       // Refresh chain every 50 ticks (~1 min at 1.2 s/tick)
       if (_tickCount % 50 == 0 && !_chainRefreshInFlight) {
         add(const RefreshSpxChain());
+      }
+
+      // Refresh VIX every 25 ticks (~30 s) and S/R levels every 300 ticks (~6 min)
+      if (_tickCount % 25 == 0) {
+        unawaited(_service.fetchVix().then((v) {
+          if (v != null) { _prevVixLevel = _vixLevel; _vixLevel = v; }
+        }));
+      }
+      if (_tickCount % 300 == 0) {
+        unawaited(_refreshConfluenceData());
+      }
+
+      // Update MACD history from spot tape (EMA12 − EMA26)
+      if (_spotTape.length >= 26) {
+        final macdLine = _ema(_spotTape, 12) - _ema(_spotTape, 26);
+        _macdHistory.add(macdLine);
+        if (_macdHistory.length > 60) _macdHistory.removeAt(0);
       }
 
       // Tick open positions
@@ -349,6 +382,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
 
       // ── SL / TP sweep ──────────────────────────────────────────────────────
       final surviving = <SpxPosition>[];
+      final newlyClosed = <SpxClosedPositionRecord>[];
       var realizedPnL = state.realizedPnL;
       var totalTrades = state.totalTrades;
       var winTrades = state.winTrades;
@@ -362,6 +396,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             exitReasonText: 'Position hit stop-loss threshold.',
             pnlUsd: pnl,
           );
+          newlyClosed.add(_buildClosedRecord(
+            pos,
+            exitReason: SpxExitReasonCodes.stopLoss,
+            pnlUsd: pnl,
+          ));
           _recordIntradayMarker(
             timestamp: DateTime.now(),
             spot: spot,
@@ -389,6 +428,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             exitReasonText: 'Position hit take-profit threshold.',
             pnlUsd: pnl,
           );
+          newlyClosed.add(_buildClosedRecord(
+            pos,
+            exitReason: SpxExitReasonCodes.takeProfit,
+            pnlUsd: pnl,
+          ));
           _recordIntradayMarker(
             timestamp: DateTime.now(),
             spot: spot,
@@ -411,12 +455,18 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
           totalTrades++;
           winTrades++;
         } else if (pos.isExpired) {
+          final pnl = pos.unrealizedPnL;
           _recordExit(
             pos,
             exitReasonCode: SpxExitReasonCodes.expired,
             exitReasonText: 'Contract reached expiry.',
-            pnlUsd: pos.unrealizedPnL,
+            pnlUsd: pnl,
           );
+          newlyClosed.add(_buildClosedRecord(
+            pos,
+            exitReason: SpxExitReasonCodes.expired,
+            pnlUsd: pnl,
+          ));
           _recordIntradayMarker(
             timestamp: DateTime.now(),
             spot: spot,
@@ -429,7 +479,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
             '⏱ EXPIRED ${pos.contract.symbol} — position closed at expiry',
             TradeLogType.warn,
           );
-          realizedPnL += pos.unrealizedPnL;
+          realizedPnL += pnl;
           totalTrades++;
         } else {
           surviving.add(pos);
@@ -477,11 +527,15 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         sessionOpenPrice: _sessionOpenPrice,
         sessionHighPrice: _sessionHighPrice,
         sessionLowPrice: _sessionLowPrice,
+        dataMode: _service.isLive ? SpxDataMode.live : SpxDataMode.simulator,
         gexData: gexData,
         strategySnapshot: strategySnapshot,
         realizedPnL: realizedPnL,
         totalTrades: totalTrades,
         winTrades: winTrades,
+        closedToday: newlyClosed.isEmpty
+            ? null
+            : [...state.closedToday, ...newlyClosed],
       ));
       _logStrategyActionChange(strategySnapshot);
     } finally {
@@ -866,7 +920,7 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     );
   }
 
-  void _onClose(CloseSpxPosition event, Emitter<SpxState> emit) {
+  Future<void> _onClose(CloseSpxPosition event, Emitter<SpxState> emit) async {
     final idx = state.positions.indexWhere((p) => p.id == event.positionId);
     if (idx == -1) return;
     final pos = state.positions[idx];
@@ -902,6 +956,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       realizedPnL: state.realizedPnL + pnl,
       totalTrades: state.totalTrades + 1,
       winTrades: pnl > 0 ? state.winTrades + 1 : state.winTrades,
+      closedToday: [
+        ...state.closedToday,
+        _buildClosedRecord(
+          pos,
+          exitReason: SpxExitReasonCodes.manualClose,
+          pnlUsd: pnl,
+        ),
+      ],
     ));
   }
 
@@ -1208,13 +1270,25 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       spot: spot,
       targetingMode: state.contractTargetingMode,
     );
-    final orderedContracts = orderSpxContractsForTargeting(
+    // Primary sort: targeting mode + greek quality (existing logic).
+    // Secondary sort: signal score descending — highest-quality contract tried first.
+    final baseOrdered = orderSpxContractsForTargeting(
       targetedContracts.isNotEmpty ? targetedContracts : eligibleContracts,
       spot: spot,
       targetingMode: targetedContracts.isNotEmpty
           ? state.contractTargetingMode
           : SpxContractTargetingMode.deltaZone,
     );
+    final scored = baseOrdered
+        .asMap()
+        .entries
+        .map((e) => (index: e.key, contract: e.value, score: _signalScore(e.value)))
+        .toList()
+      ..sort((a, b) {
+        final sd = b.score - a.score;
+        return sd != 0 ? sd : a.index - b.index; // stable tiebreak
+      });
+    final orderedContracts = scored.map((e) => e.contract).toList();
     var totalNotional = positions.fold<double>(
       0,
       (sum, p) => sum + (p.currentPremium * p.contracts * 100),
@@ -1779,6 +1853,63 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     final premarketDirection =
         _directionFromValue(openingMovePercent, deadband: 0.15);
 
+    // ── MACD (Confluence 1) ────────────────────────────────────────────────
+    double? macdLine;
+    double? macdSignal;
+    SpxDirection macdDirection = SpxDirection.neutral;
+    if (_spotTape.length >= 26) {
+      macdLine = _ema(_spotTape, 12) - _ema(_spotTape, 26);
+      if (_macdHistory.length >= 9) {
+        macdSignal = _ema(_macdHistory, 9);
+        final histogram = macdLine - macdSignal;
+        macdDirection = _directionFromValue(histogram, deadband: 0.15);
+      } else {
+        macdDirection = _directionFromValue(macdLine, deadband: 0.5);
+      }
+    }
+
+    // ── VIX (Confluence 3) ─────────────────────────────────────────────────
+    SpxDirection vixDirection = SpxDirection.neutral;
+    String vixDetail = 'No VIX data';
+    if (_vixLevel != null) {
+      final vixChange = (_vixLevel! - (_prevVixLevel ?? _vixLevel!));
+      // Rising VIX = fear = bearish market; falling VIX = calm = bullish
+      vixDirection = _directionFromValue(-vixChange, deadband: 0.3);
+      // Override: extreme fear (VIX > 30) biases short regardless of direction
+      if (_vixLevel! > 30) vixDirection = SpxDirection.down;
+      vixDetail = 'VIX ${_vixLevel!.toStringAsFixed(1)} '
+          '(${vixChange >= 0 ? '+' : ''}${vixChange.toStringAsFixed(2)})';
+    }
+
+    // ── S/R Proximity (Confluence 2) ──────────────────────────────────────
+    SpxDirection srDirection = SpxDirection.neutral;
+    String srDetail = 'No S/R data';
+    if (_priorDayHigh != null && _priorDayLow != null && _priorDayClose != null) {
+      final proximity = spot * 0.003; // 0.3% tolerance
+      final abovePDH = spot > _priorDayHigh! + proximity;
+      final nearPDH   = (spot - _priorDayHigh!).abs() <= proximity;
+      final nearPDL   = (spot - _priorDayLow!).abs() <= proximity;
+      final weekNearHigh = _weekHigh != null && (spot - _weekHigh!).abs() <= proximity;
+      final weekNearLow  = _weekLow  != null && (spot - _weekLow!).abs() <= proximity;
+
+      if (nearPDH || weekNearHigh) {
+        srDirection = SpxDirection.down; // approaching resistance
+        srDetail = 'Near resistance PDH/WkH ${nearPDH ? _priorDayHigh!.toStringAsFixed(0) : _weekHigh!.toStringAsFixed(0)}';
+      } else if (nearPDL || weekNearLow) {
+        srDirection = SpxDirection.up;   // at support
+        srDetail = 'Near support PDL/WkL ${nearPDL ? _priorDayLow!.toStringAsFixed(0) : _weekLow!.toStringAsFixed(0)}';
+      } else if (abovePDH) {
+        srDirection = SpxDirection.up;   // breakout above prior high
+        srDetail = 'Breakout above PDH ${_priorDayHigh!.toStringAsFixed(0)}';
+      } else {
+        srDirection = spot > _priorDayClose!
+            ? SpxDirection.up
+            : SpxDirection.down;
+        srDetail = 'vs PDC ${_priorDayClose!.toStringAsFixed(0)} '
+            '(${spot > _priorDayClose! ? 'above' : 'below'})';
+      }
+    }
+
     final signals = <SpxStrategySignal>[
       SpxStrategySignal(
         key: 'premarket',
@@ -1826,14 +1957,36 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
         direction: domDirection,
         detail: 'Upside/Downside OI ${domRatio.toStringAsFixed(2)}x',
       ),
+      SpxStrategySignal(
+        key: 'macd',
+        label: 'MACD',
+        direction: macdDirection,
+        detail: macdLine == null
+            ? 'Insufficient data (<26 ticks)'
+            : macdSignal == null
+                ? 'MACD ${macdLine.toStringAsFixed(2)} (building signal)'
+                : 'MACD ${macdLine.toStringAsFixed(2)} / sig ${macdSignal.toStringAsFixed(2)}',
+      ),
+      SpxStrategySignal(
+        key: 'vix',
+        label: 'VIX',
+        direction: vixDirection,
+        detail: vixDetail,
+      ),
+      SpxStrategySignal(
+        key: 'sr',
+        label: 'S/R Level',
+        direction: srDirection,
+        detail: srDetail,
+      ),
     ];
 
     final upCount = signals.where((s) => s.direction == SpxDirection.up).length;
     final downCount =
         signals.where((s) => s.direction == SpxDirection.down).length;
-    final dominantDirection = upCount >= 6
+    final dominantDirection = upCount >= 8
         ? SpxDirection.up
-        : (downCount >= 6 ? SpxDirection.down : SpxDirection.neutral);
+        : (downCount >= 8 ? SpxDirection.down : SpxDirection.neutral);
 
     SpxStrategyActionType action;
     String reason;
@@ -1843,11 +1996,11 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     } else if (dominantDirection == SpxDirection.up) {
       action = SpxStrategyActionType.goLong;
       reason =
-          'All 7 signals aligned up. Enter near minute-14 low on confirmation.';
+          '8+ of 10 signals aligned up. Enter near minute-14 low on confirmation.';
     } else if (dominantDirection == SpxDirection.down) {
       action = SpxStrategyActionType.goShort;
       reason =
-          'All 7 signals aligned down. Enter near minute-14 high on confirmation.';
+          '8+ of 10 signals aligned down. Enter near minute-14 high on confirmation.';
     } else if (minutesFromStart < 35) {
       action = SpxStrategyActionType.wait;
       reason = 'Signals are discordant before S35 window. Wait/reassess.';
@@ -1874,6 +2027,14 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
       dplDirection: dplDirection,
       signals: signals,
       updatedAt: now,
+      vixLevel: _vixLevel,
+      priorDayHigh: _priorDayHigh,
+      priorDayLow: _priorDayLow,
+      priorDayClose: _priorDayClose,
+      weekHigh: _weekHigh,
+      weekLow: _weekLow,
+      macdLine: macdLine,
+      macdSignal: macdSignal,
     );
   }
 
@@ -2011,6 +2172,60 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     );
   }
 
+  /// Fetches VIX and SPX daily bars and stores them in instance variables.
+  /// Called at init and periodically during market hours.
+  Future<void> _refreshConfluenceData() async {
+    try {
+      final results = await Future.wait([
+        _service.fetchVix(),
+        _service.fetchSpxDailyBars(lookbackCalendarDays: 10),
+      ]);
+      final vix = results[0] as double?;
+      final bars = results[1] as List<SpxDailyBar>;
+
+      if (vix != null) {
+        _prevVixLevel = _vixLevel;
+        _vixLevel = vix;
+      }
+
+      if (bars.length >= 2) {
+        // Most-recent bar may be today (partial) — use bar before it as "prior day"
+        final today = DateTime.now();
+        final todayKey =
+            '${today.year}-${today.month.toString().padLeft(2,'0')}-${today.day.toString().padLeft(2,'0')}';
+        final priorBars = bars.where((b) => b.date != todayKey).toList();
+        if (priorBars.isNotEmpty) {
+          final prior = priorBars.last;
+          _priorDayHigh = prior.high;
+          _priorDayLow = prior.low;
+          _priorDayClose = prior.close;
+        }
+        // Weekly levels: high/low across last 5 prior trading days
+        final weekBars = priorBars.length > 5 ? priorBars.sublist(priorBars.length - 5) : priorBars;
+        if (weekBars.isNotEmpty) {
+          _weekHigh = weekBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+          _weekLow  = weekBars.map((b) => b.low).reduce((a, b) => a < b ? a : b);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _emitJournalHistory(Emitter<SpxState> emit) async {
+    try {
+      final records = await _journal.loadAll(_userId, limit: 500);
+      final liveRecords = records
+          .where((r) => r.dataMode == 'live')
+          .toList()
+        ..sort((a, b) => b.enteredAt.compareTo(a.enteredAt));
+      emit(state.copyWith(journalRecords: liveRecords));
+    } catch (_) {}
+  }
+
+  Future<void> _onLoadJournalHistory(
+    LoadJournalHistory event,
+    Emitter<SpxState> emit,
+  ) async => _emitJournalHistory(emit);
+
   void _recordEntry(
     SpxPosition pos, {
     required String entrySource,
@@ -2111,19 +2326,117 @@ class SpxBloc extends Bloc<SpxEvent, SpxState> {
     ));
   }
 
+  SpxClosedPositionRecord _buildClosedRecord(
+    SpxPosition pos, {
+    required String exitReason,
+    required double pnlUsd,
+  }) {
+    final now = DateTime.now();
+    return SpxClosedPositionRecord(
+      id: pos.id,
+      symbol: pos.contract.symbol,
+      side: pos.contract.side,
+      strike: pos.contract.strike,
+      dteAtEntry: pos.contract.daysToExpiry,
+      contracts: pos.contracts,
+      entryPremium: pos.entryPremium,
+      entryAt: pos.openedAt,
+      exitPremium: pos.currentPremium,
+      exitAt: now,
+      pnlUsd: pnlUsd,
+      pnlPct: pos.pnlPercent,
+      exitReason: exitReason,
+    );
+  }
+
+  /// Enhanced signal score (0–17 scale).
+  ///
+  /// Factors (service pre-filters to score ≥ 6 = buy, so this ranks within buyers):
+  ///   IV rank, delta quality, gamma, theta bleed, spread, liquidity,
+  ///   premium range, DTE, GEX regime + wall proximity, strategy confidence.
   int _signalScore(OptionsContract contract) {
     var score = 0;
-    if (contract.ivRank < 35) {
-      score += 2;
-    } else if (contract.ivRank > 75) {
-      score -= 1;
+    final spot = state.spotPrice;
+    final gex = state.gexData;
+    final strategy = state.strategySnapshot;
+
+    // ── IV rank (0–3 pts) ────────────────────────────────────────────────
+    if (contract.ivRank < 25)       score += 3;
+    else if (contract.ivRank < 40)  score += 2;
+    else if (contract.ivRank < 60)  score += 1;
+    else if (contract.ivRank > 75)  score -= 1;
+
+    // ── Delta quality (0–2 pts) ──────────────────────────────────────────
+    final absD = contract.greeks.delta.abs();
+    if (absD >= 0.25 && absD <= 0.40)      score += 2;
+    else if (absD >= 0.20 && absD <= 0.45) score += 1;
+
+    // ── Gamma quality (0–1 pt) ───────────────────────────────────────────
+    if (contract.greeks.gamma >= 0.003) score += 1;
+
+    // ── Theta cost as % of premium (0 to −2 pts) ────────────────────────
+    if (contract.midPrice > 0) {
+      final thetaPct = contract.greeks.theta.abs() / contract.midPrice;
+      if (thetaPct > 0.20)      score -= 2;
+      else if (thetaPct > 0.12) score -= 1;
     }
-    if (contract.greeks.delta.abs() >= 0.20 &&
-        contract.greeks.delta.abs() <= 0.45) {
-      score += 1;
+
+    // ── Spread quality (0–2 pts) ─────────────────────────────────────────
+    if (contract.midPrice > 0) {
+      final spread = (contract.ask - contract.bid) / contract.midPrice;
+      if (spread < 0.01)      score += 2;
+      else if (spread < 0.03) score += 1;
     }
-    if (contract.volume > contract.openInterest * 0.05) score += 1;
-    if (contract.midPrice > 0.50) score += 1;
+
+    // ── Liquidity (0–3 pts) ──────────────────────────────────────────────
+    if (contract.openInterest > 0) {
+      final voiRatio = contract.volume / contract.openInterest;
+      if (voiRatio > 0.15)      score += 2;
+      else if (voiRatio > 0.05) score += 1;
+    }
+    if (contract.volume > 500) score += 1;
+
+    // ── Premium range (−1 to +1 pt) ──────────────────────────────────────
+    if (contract.midPrice < 0.50)                          score -= 1;
+    else if (contract.midPrice >= 1.0 && contract.midPrice <= 8.0) score += 1;
+    else if (contract.midPrice > 15.0)                     score -= 1;
+
+    // ── DTE quality (−1 to +2 pts) ───────────────────────────────────────
+    final dte = contract.daysToExpiry;
+    if (dte >= 2 && dte <= 7)       score += 2;
+    else if (dte >= 8 && dte <= 14) score += 1;
+    else if (dte > 21)              score -= 1;
+
+    // ── GEX regime & wall proximity (0–3 pts) ────────────────────────────
+    if (gex != null && spot > 0) {
+      // Short-gamma regime: dealers amplify directional moves
+      if (gex.netGex < 0) score += 1;
+
+      if (contract.side == OptionsSide.call) {
+        final wall = gex.gammaWall;
+        if (wall != null && spot < wall) {
+          // Spot below gamma wall — price tends to gravitate upward toward it
+          final dist = wall - spot;
+          if (dist <= 50)        score += 2;
+          else if (dist <= 150)  score += 1;
+        }
+      } else {
+        final wall = gex.putWall;
+        if (wall != null && spot > wall) {
+          // Spot above put wall — downside gap if wall breaks
+          final dist = spot - wall;
+          if (dist <= 50)        score += 2;
+          else if (dist <= 150)  score += 1;
+        }
+      }
+    }
+
+    // ── Strategy confidence (0–2 pts) ────────────────────────────────────
+    if (strategy != null) {
+      if (strategy.allSignalsAligned)                           score += 2;
+      else if (strategy.upSignals >= 5 || strategy.downSignals >= 5) score += 1;
+    }
+
     return score;
   }
 

@@ -247,7 +247,7 @@ class SpxOptionsService {
           spot: spot, strike: strike, daysToExpiry: dteFractional, iv: iv, side: side,
         );
         final ivRank = SpxGreeksCalculator.calcIvRank(iv, _ivHistoryPlaceholder());
-        final signal = _scoreSignal(greeks, ivRank, oi, vol, (bid + ask) / 2);
+        final signal = _scoreSignal(greeks, ivRank, oi, vol, (bid + ask) / 2, dteInt);
 
         contracts.add(OptionsContract(
           symbol:            opt['symbol'] as String? ?? '',
@@ -273,6 +273,55 @@ class SpxOptionsService {
     return contracts;
   }
 
+  /// VIX spot level. Returns null when outside market hours or on error.
+  Future<double?> fetchVix() async {
+    if (!_shouldAttemptLive()) return null;
+    try {
+      final uri = Uri.parse('$_baseUrl/markets/quotes?symbols=VIX&greeks=false');
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+      final q = jsonDecode(res.body)['quotes']['quote'];
+      final last = (q['last'] as num?)?.toDouble();
+      if (last == null || last <= 0) return null;
+      return last;
+    } catch (e) {
+      _liveLog('VIX fetch failed: $e');
+      return null;
+    }
+  }
+
+  /// SPX daily OHLC bars for the past [lookbackCalendarDays] calendar days.
+  /// Used to derive prior-day high/low/close and weekly S/R levels.
+  Future<List<SpxDailyBar>> fetchSpxDailyBars({int lookbackCalendarDays = 10}) async {
+    if (!_canAttemptLive()) return [];
+    try {
+      final now = DateTime.now().toUtc();
+      final start = now.subtract(Duration(days: lookbackCalendarDays));
+      String _pad(int n) => n.toString().padLeft(2, '0');
+      String _fmt(DateTime d) => '${d.year}-${_pad(d.month)}-${_pad(d.day)}';
+      final uri = Uri.parse(
+        '$_baseUrl/markets/history?symbol=SPX&interval=daily'
+        '&start=${_fmt(start)}&end=${_fmt(now)}',
+      );
+      final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+      final data = jsonDecode(res.body);
+      final raw = data['history']?['day'];
+      if (raw == null) return [];
+      final list = raw is List ? raw : [raw];
+      return list.map<SpxDailyBar>((d) => SpxDailyBar(
+        date: (d['date'] as String?) ?? '',
+        open: (d['open'] as num?)?.toDouble() ?? 0,
+        high: (d['high'] as num?)?.toDouble() ?? 0,
+        low: (d['low'] as num?)?.toDouble() ?? 0,
+        close: (d['close'] as num?)?.toDouble() ?? 0,
+      )).toList();
+    } catch (e) {
+      _liveLog('SPX daily bars fetch failed: $e');
+      return [];
+    }
+  }
+
   // ── Signal scoring (mirrors simulator logic) ─────────────────────────────
 
   SpxSignalType _scoreSignal(
@@ -281,19 +330,51 @@ class SpxOptionsService {
     int oi,
     int volume,
     double midPrice,
+    int daysToExpiry,
   ) {
     var score = 0;
-    if (ivRank < 35) {
-      score += 2; // cheap IV favors long premium entries
-    } else if (ivRank > 75) {
-      score -= 1; // expensive IV penalizes long entries
-    }
-    if (greeks.delta.abs() >= 0.20 && greeks.delta.abs() <= 0.45) { score += 1; }
-    if (volume > oi * 0.05) { score += 1; }
-    if (midPrice > 0.50)    { score += 1; }
 
-    if (score >= 3) return SpxSignalType.buy;
-    if (score <= 1) return SpxSignalType.sell;
+    // IV rank gradient (0–3 pts)
+    if (ivRank < 25)       score += 3;
+    else if (ivRank < 40)  score += 2;
+    else if (ivRank < 60)  score += 1;
+    else if (ivRank > 75)  score -= 1;
+
+    // Delta quality (0–2 pts)
+    final absD = greeks.delta.abs();
+    if (absD >= 0.25 && absD <= 0.40)      score += 2;
+    else if (absD >= 0.20 && absD <= 0.45) score += 1;
+
+    // Gamma quality (0–1 pt)
+    if (greeks.gamma >= 0.003) score += 1;
+
+    // Theta cost as % of premium (0 to −2 pts)
+    if (midPrice > 0) {
+      final thetaPct = greeks.theta.abs() / midPrice;
+      if (thetaPct > 0.20)      score -= 2;
+      else if (thetaPct > 0.12) score -= 1;
+    }
+
+    // Liquidity (0–3 pts)
+    if (oi > 0) {
+      final voiRatio = volume / oi;
+      if (voiRatio > 0.15)      score += 2;
+      else if (voiRatio > 0.05) score += 1;
+    }
+    if (volume > 500) score += 1;
+
+    // Premium range (−1 to +1 pt)
+    if (midPrice < 0.50)                          score -= 1;
+    else if (midPrice >= 1.0 && midPrice <= 8.0)  score += 1;
+    else if (midPrice > 15.0)                     score -= 1;
+
+    // DTE quality (−1 to +2 pts)
+    if (daysToExpiry >= 2 && daysToExpiry <= 7)        score += 2;
+    else if (daysToExpiry >= 8 && daysToExpiry <= 14)  score += 1;
+    else if (daysToExpiry > 21)                        score -= 1;
+
+    if (score >= 6) return SpxSignalType.buy;
+    if (score <= 2) return SpxSignalType.sell;
     return SpxSignalType.watch;
   }
 

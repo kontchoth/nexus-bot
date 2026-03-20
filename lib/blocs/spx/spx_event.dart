@@ -155,6 +155,11 @@ class ResetSpxDay extends SpxEvent {
   const ResetSpxDay();
 }
 
+/// Load (or refresh) the persistent trade journal history from storage.
+class LoadJournalHistory extends SpxEvent {
+  const LoadJournalHistory();
+}
+
 // Internal event — append a log entry.
 class _SpxAddLog extends SpxEvent {
   final TradeLog log;

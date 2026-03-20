@@ -360,6 +360,53 @@ class SpxPosition extends Equatable {
   List<Object?> get props => [id, contract.symbol, currentPremium];
 }
 
+// ── Closed Position Record ────────────────────────────────────────────────────
+
+/// Lightweight in-memory record of a position that closed during the session.
+/// Kept in SpxState.closedToday so the positions screen can show the full
+/// entry → exit timeline without hitting the trade journal repository.
+class SpxClosedPositionRecord extends Equatable {
+  final String id;
+  final String symbol;
+  final OptionsSide side;
+  final double strike;
+  final int dteAtEntry;
+  final int contracts;
+
+  final double entryPremium;
+  final DateTime entryAt;
+
+  final double exitPremium;
+  final DateTime exitAt;
+
+  final double pnlUsd;
+  final double pnlPct;
+
+  /// SpxExitReasonCodes value: stopLoss / takeProfit / manualClose / expired.
+  final String exitReason;
+
+  const SpxClosedPositionRecord({
+    required this.id,
+    required this.symbol,
+    required this.side,
+    required this.strike,
+    required this.dteAtEntry,
+    required this.contracts,
+    required this.entryPremium,
+    required this.entryAt,
+    required this.exitPremium,
+    required this.exitAt,
+    required this.pnlUsd,
+    required this.pnlPct,
+    required this.exitReason,
+  });
+
+  bool get isWin => pnlUsd >= 0;
+
+  @override
+  List<Object?> get props => [id, exitAt];
+}
+
 // ── GEX Data ──────────────────────────────────────────────────────────────────
 
 /// Aggregate dealer gamma exposure snapshot.
@@ -549,6 +596,23 @@ class SpxStrategySignal extends Equatable {
   List<Object?> get props => [key, label, direction, detail];
 }
 
+/// One day of OHLC data for SPX — used for prior-day / weekly S/R levels.
+class SpxDailyBar {
+  final String date; // YYYY-MM-DD
+  final double open;
+  final double high;
+  final double low;
+  final double close;
+
+  const SpxDailyBar({
+    required this.date,
+    required this.open,
+    required this.high,
+    required this.low,
+    required this.close,
+  });
+}
+
 class SpxStrategySnapshot extends Equatable {
   final SpxStrategyActionType action;
   final String reason;
@@ -562,6 +626,23 @@ class SpxStrategySnapshot extends Equatable {
   final List<SpxStrategySignal> signals;
   final DateTime updatedAt;
 
+  // ── Triple Confluence extras ────────────────────────────────────────────
+  /// Current VIX level (null if unavailable / simulator mode).
+  final double? vixLevel;
+
+  /// Prior trading day high/low/close for S/R.
+  final double? priorDayHigh;
+  final double? priorDayLow;
+  final double? priorDayClose;
+
+  /// Rolling 5-day (weekly) high and low.
+  final double? weekHigh;
+  final double? weekLow;
+
+  /// Latest MACD line (EMA12 − EMA26) and signal line (EMA9 of MACD).
+  final double? macdLine;
+  final double? macdSignal;
+
   const SpxStrategySnapshot({
     required this.action,
     required this.reason,
@@ -574,6 +655,14 @@ class SpxStrategySnapshot extends Equatable {
     required this.dplDirection,
     required this.signals,
     required this.updatedAt,
+    this.vixLevel,
+    this.priorDayHigh,
+    this.priorDayLow,
+    this.priorDayClose,
+    this.weekHigh,
+    this.weekLow,
+    this.macdLine,
+    this.macdSignal,
   });
 
   int get upSignals =>
@@ -611,5 +700,13 @@ class SpxStrategySnapshot extends Equatable {
         dplDirection,
         signals,
         updatedAt,
+        vixLevel,
+        priorDayHigh,
+        priorDayLow,
+        priorDayClose,
+        weekHigh,
+        weekLow,
+        macdLine,
+        macdSignal,
       ];
 }

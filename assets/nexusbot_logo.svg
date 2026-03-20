@@ -1,0 +1,157 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Glow filters -->
+    <filter id="glow-blue" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow-green" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow-outer" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Background gradient: deep navy -->
+    <radialGradient id="bg-grad" cx="50%" cy="45%" r="55%">
+      <stop offset="0%"   stop-color="#0D1825"/>
+      <stop offset="100%" stop-color="#050A0F"/>
+    </radialGradient>
+
+    <!-- Blue gradient for N strokes -->
+    <linearGradient id="n-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#66AAFF"/>
+      <stop offset="100%" stop-color="#2277EE"/>
+    </linearGradient>
+
+    <!-- Green gradient for chart line -->
+    <linearGradient id="chart-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#00CC6A" stop-opacity="0.6"/>
+      <stop offset="50%"  stop-color="#00FF87"/>
+      <stop offset="100%" stop-color="#00CC6A" stop-opacity="0.6"/>
+    </linearGradient>
+
+    <!-- Clip to hexagon -->
+    <clipPath id="hex-clip">
+      <!-- flat-top hexagon, r=230 -->
+      <polygon points="486,256 371,455 141,455 26,256 141,57 371,57"/>
+    </clipPath>
+  </defs>
+
+  <!-- ── Outer ambient glow ring ── -->
+  <polygon points="486,256 371,455 141,455 26,256 141,57 371,57"
+           fill="none" stroke="#4499FF" stroke-width="6" opacity="0.12"
+           filter="url(#glow-outer)"/>
+
+  <!-- ── Hexagon background ── -->
+  <polygon points="486,256 371,455 141,455 26,256 141,57 371,57"
+           fill="url(#bg-grad)"/>
+
+  <!-- ── Subtle grid dots inside hex ── -->
+  <g clip-path="url(#hex-clip)" opacity="0.18">
+    <!-- rows of dots -->
+    <g fill="#4499FF">
+      <!-- row 1 -->
+      <circle cx="160" cy="130" r="2"/><circle cx="210" cy="130" r="2"/><circle cx="260" cy="130" r="2"/><circle cx="310" cy="130" r="2"/><circle cx="360" cy="130" r="2"/>
+      <!-- row 2 -->
+      <circle cx="135" cy="175" r="2"/><circle cx="185" cy="175" r="2"/><circle cx="235" cy="175" r="2"/><circle cx="285" cy="175" r="2"/><circle cx="335" cy="175" r="2"/><circle cx="385" cy="175" r="2"/>
+      <!-- row 3 -->
+      <circle cx="110" cy="220" r="2"/><circle cx="160" cy="220" r="2"/><circle cx="210" cy="220" r="2"/><circle cx="260" cy="220" r="2"/><circle cx="310" cy="220" r="2"/><circle cx="360" cy="220" r="2"/><circle cx="410" cy="220" r="2"/>
+      <!-- row 4 -->
+      <circle cx="110" cy="265" r="2"/><circle cx="160" cy="265" r="2"/><circle cx="210" cy="265" r="2"/><circle cx="260" cy="265" r="2"/><circle cx="310" cy="265" r="2"/><circle cx="360" cy="265" r="2"/><circle cx="410" cy="265" r="2"/>
+      <!-- row 5 -->
+      <circle cx="135" cy="310" r="2"/><circle cx="185" cy="310" r="2"/><circle cx="235" cy="310" r="2"/><circle cx="285" cy="310" r="2"/><circle cx="335" cy="310" r="2"/><circle cx="385" cy="310" r="2"/>
+      <!-- row 6 -->
+      <circle cx="160" cy="355" r="2"/><circle cx="210" cy="355" r="2"/><circle cx="260" cy="355" r="2"/><circle cx="310" cy="355" r="2"/><circle cx="360" cy="355" r="2"/>
+    </g>
+  </g>
+
+  <!-- ── Hexagon border ── -->
+  <polygon points="486,256 371,455 141,455 26,256 141,57 371,57"
+           fill="none" stroke="#1A2E42" stroke-width="3"/>
+  <!-- inner blue accent border -->
+  <polygon points="486,256 371,455 141,455 26,256 141,57 371,57"
+           fill="none" stroke="#4499FF" stroke-width="1.5" opacity="0.35"/>
+
+  <!-- ── The "N" — circuit board style ── -->
+
+  <!-- Shadow/depth layer (slightly offset) -->
+  <g opacity="0.25" transform="translate(4,4)">
+    <line x1="158" y1="148" x2="158" y2="364" stroke="#000" stroke-width="16" stroke-linecap="round"/>
+    <line x1="354" y1="148" x2="354" y2="364" stroke="#000" stroke-width="16" stroke-linecap="round"/>
+    <line x1="158" y1="148" x2="354" y2="364" stroke="#000" stroke-width="16" stroke-linecap="round"/>
+  </g>
+
+  <!-- Left vertical bar -->
+  <line x1="158" y1="148" x2="158" y2="364"
+        stroke="url(#n-grad)" stroke-width="16" stroke-linecap="round"
+        filter="url(#glow-blue)"/>
+
+  <!-- Right vertical bar -->
+  <line x1="354" y1="148" x2="354" y2="364"
+        stroke="url(#n-grad)" stroke-width="16" stroke-linecap="round"
+        filter="url(#glow-blue)"/>
+
+  <!-- Diagonal (top-left → bottom-right) -->
+  <line x1="158" y1="148" x2="354" y2="364"
+        stroke="url(#n-grad)" stroke-width="16" stroke-linecap="round"
+        filter="url(#glow-blue)"/>
+
+  <!-- ── Circuit nodes ── -->
+
+  <!-- Top-left node (blue) -->
+  <circle cx="158" cy="148" r="18" fill="#050A0F" stroke="#4499FF" stroke-width="5" filter="url(#glow-blue)"/>
+  <circle cx="158" cy="148" r="8"  fill="#4499FF"/>
+
+  <!-- Top-right node (blue) -->
+  <circle cx="354" cy="148" r="18" fill="#050A0F" stroke="#4499FF" stroke-width="5" filter="url(#glow-blue)"/>
+  <circle cx="354" cy="148" r="8"  fill="#4499FF"/>
+
+  <!-- Bottom-left node (green) -->
+  <circle cx="158" cy="364" r="18" fill="#050A0F" stroke="#00FF87" stroke-width="5" filter="url(#glow-green)"/>
+  <circle cx="158" cy="364" r="8"  fill="#00FF87"/>
+
+  <!-- Bottom-right node (green) -->
+  <circle cx="354" cy="364" r="18" fill="#050A0F" stroke="#00FF87" stroke-width="5" filter="url(#glow-green)"/>
+  <circle cx="354" cy="364" r="8"  fill="#00FF87"/>
+
+  <!-- Mid-diagonal node (subtle, blue/green blend) -->
+  <circle cx="256" cy="256" r="12" fill="#050A0F" stroke="#4499FF" stroke-width="3.5" opacity="0.65"/>
+  <circle cx="256" cy="256" r="5"  fill="#66AAFF" opacity="0.8"/>
+
+  <!-- ── Trading chart line (gamma curve) at bottom strip ── -->
+  <!-- Subtle area fill under the curve -->
+  <polyline
+    points="120,428 148,422 172,426 198,415 222,409 248,413 272,400 298,405 322,395 348,400 372,388 396,392"
+    stroke="none" fill="none"/>
+  <!-- Glow pass -->
+  <polyline
+    points="120,428 148,422 172,426 198,415 222,409 248,413 272,400 298,405 322,395 348,400 372,388 396,392"
+    stroke="#00FF87" stroke-width="3" fill="none"
+    stroke-linecap="round" stroke-linejoin="round"
+    opacity="0.5" filter="url(#glow-green)"/>
+  <!-- Main line -->
+  <polyline
+    points="120,428 148,422 172,426 198,415 222,409 248,413 272,400 298,405 322,395 348,400 372,388 396,392"
+    stroke="url(#chart-grad)" stroke-width="2.5" fill="none"
+    stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Chart dot highlights -->
+  <circle cx="272" cy="400" r="3.5" fill="#00FF87" opacity="0.9"/>
+  <circle cx="372" cy="388" r="3.5" fill="#00FF87" opacity="0.9"/>
+
+  <!-- ── Thin separator line above chart ── -->
+  <line x1="100" y1="382" x2="412" y2="382"
+        stroke="#1A2E42" stroke-width="1" opacity="0.6" clip-path="url(#hex-clip)"/>
+</svg>

@@ -14,6 +14,7 @@ import 'screens/auth_screen.dart';
 import 'screens/spx/spx_chain_screen.dart';
 import 'screens/spx/spx_positions_screen.dart';
 import 'screens/spx/spx_dashboard_screen.dart';
+import 'screens/spx/spx_gex_stream_screen.dart';
 import 'screens/spx/spx_activity_screen.dart';
 import 'screens/spx/spx_signal_sheet_screen.dart';
 import 'screens/settings_screen.dart';
@@ -26,6 +27,7 @@ import 'services/spx/spx_opportunity_journal_repository.dart';
 import 'services/spx/spx_trade_journal_repository.dart';
 import 'services/spx/spx_tradier_secure_storage.dart';
 import 'theme/app_theme.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 const _secureStorage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -266,6 +268,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         const SpxChainScreen(),
         const SpxPositionsScreen(),
         const SpxDashboardScreen(),
+        const SpxGexStreamScreen(),
         const SpxSignalSheetScreen(),
         SpxActivityScreen(
           key: ValueKey<int>(_activityResetToken),
@@ -377,7 +380,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final isListPayload = payload == TradeAlertPayloads.spxOpportunities;
     if (focusId == null && !isListPayload) return;
     setState(() {
-      _activeTab = 4; // Activity tab
+      _activeTab = 5; // Activity tab
       _spxOpportunityFocusId = focusId;
       _activityResetToken++;
     });
@@ -412,7 +415,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         children: [
           if (missingToken)
             GestureDetector(
-              onTap: () => setState(() => _activeTab = 5),
+              onTap: () => setState(() => _activeTab = 6),
               child: Container(
                 width: double.infinity,
                 color: Colors.orange.withValues(alpha: 0.15),
@@ -471,6 +474,12 @@ class _NexusAppBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
+              SvgPicture.asset(
+                'assets/nexusbot_logo.svg',
+                height: 32,
+                width: 32,
+              ),
+              const SizedBox(width: 10),
               RichText(
                 text: TextSpan(children: [
                   TextSpan(
@@ -599,6 +608,7 @@ class _NexusNavBar extends StatelessWidget {
     (Icons.show_chart_rounded, 'Chain'),
     (Icons.account_balance_wallet_outlined, 'Positions'),
     (Icons.bar_chart_rounded, 'Dashboard'),
+    (Icons.multiline_chart_rounded, 'GEX'),
     (Icons.assignment_outlined, 'Sheet'),
     (Icons.receipt_long_outlined, 'Activity'),
     (Icons.settings_outlined, 'Settings'),

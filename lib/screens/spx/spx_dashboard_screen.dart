@@ -11,7 +11,6 @@ import '../../utils/number_formatters.dart';
 import '../../services/app_settings_repository.dart';
 import '../../widgets/shared_widgets.dart';
 import '../../widgets/tradier_notification_banner.dart';
-import 'spx_gex_stream_screen.dart';
 
 class SpxDashboardScreen extends StatelessWidget {
   const SpxDashboardScreen({super.key});
@@ -1544,46 +1543,6 @@ class _GexPanel extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
               ],
-              GestureDetector(
-                onTap: () {
-                  final spxState = context.read<SpxBloc>().state;
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => SpxGexStreamScreen(
-                        tradierToken: spxState.tradierToken,
-                        tradierEnvironment: spxState.tradierEnvironment,
-                      ),
-                    ),
-                  );
-                },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.bg3,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: AppTheme.border2),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.show_chart_rounded,
-                          size: 11, color: AppTheme.blue),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Live Stream',
-                        style: GoogleFonts.spaceGrotesk(
-                            fontSize: 9,
-                            color: AppTheme.blue,
-                            fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(width: 2),
-                      const Icon(Icons.chevron_right_rounded,
-                          size: 11, color: AppTheme.blue),
-                    ],
-                  ),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 12),

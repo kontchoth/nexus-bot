@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nexusbot/theme/google_fonts_stub.dart';
 import '../blocs/auth_bloc.dart';
@@ -109,13 +110,35 @@ class _AuthScreenState extends State<AuthScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'NEXUSBOT',
-                          style: GoogleFonts.syne(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
+                        Row(
+                          children: [
+                            SvgPicture.asset(
+                              'assets/nexusbot_logo.svg',
+                              height: 48,
+                              width: 48,
+                            ),
+                            const SizedBox(width: 12),
+                            RichText(
+                              text: TextSpan(children: [
+                                TextSpan(
+                                  text: 'NEXUS',
+                                  style: GoogleFonts.syne(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: 'BOT',
+                                  style: GoogleFonts.syne(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFF00FF87),
+                                  ),
+                                ),
+                              ]),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(

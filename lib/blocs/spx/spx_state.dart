@@ -109,6 +109,13 @@ class SpxState extends Equatable {
   final int totalTrades;
   final int winTrades;
 
+  /// Positions closed during this session, newest first. Cleared on session reset.
+  final List<SpxClosedPositionRecord> closedToday;
+
+  /// Full trade journal loaded from persistent storage (live trades only).
+  /// Grouped and displayed by the journal/history screen.
+  final List<SpxTradeJournalRecord> journalRecords;
+
   const SpxState({
     required this.chain,
     required this.positions,
@@ -141,6 +148,8 @@ class SpxState extends Equatable {
     this.realizedPnL = 0,
     this.totalTrades = 0,
     this.winTrades = 0,
+    this.closedToday = const [],
+    this.journalRecords = const [],
   });
 
   factory SpxState.initial({
@@ -285,6 +294,8 @@ class SpxState extends Equatable {
     double? realizedPnL,
     int? totalTrades,
     int? winTrades,
+    List<SpxClosedPositionRecord>? closedToday,
+    List<SpxTradeJournalRecord>? journalRecords,
   }) {
     return SpxState(
       chain: chain ?? this.chain,
@@ -318,6 +329,8 @@ class SpxState extends Equatable {
       realizedPnL: realizedPnL ?? this.realizedPnL,
       totalTrades: totalTrades ?? this.totalTrades,
       winTrades: winTrades ?? this.winTrades,
+      closedToday: closedToday ?? this.closedToday,
+      journalRecords: journalRecords ?? this.journalRecords,
     );
   }
 
@@ -349,6 +362,8 @@ class SpxState extends Equatable {
         realizedPnL,
         totalTrades,
         winTrades,
+        closedToday,
+        journalRecords,
       ];
 }
 
